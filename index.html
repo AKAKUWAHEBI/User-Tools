@@ -1,0 +1,2322 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>我的小组件 · 账本 / 日程 / 打卡</title>
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f7f8fa; }
+  .tabbar { position: sticky; top: 0; display: flex; background: #fff; border-bottom: 1px solid #e6e7eb; z-index: 10; padding-top: env(safe-area-inset-top); }
+  .tabbar button { flex: 1; padding: 13px 0 11px; border: none; background: transparent; font-size: 15px; color: #969ba3; cursor: pointer; border-bottom: 2px solid transparent; font-family: inherit; }
+  .tabbar button.on { color: #1f2329; font-weight: 600; border-bottom-color: #1f2329; }
+  main { height: calc(100vh - 47px - env(safe-area-inset-top)); }
+  iframe { width: 100%; height: 100%; border: 0; display: none; background: #f7f8fa; }
+  iframe.on { display: block; }
+</style>
+</head>
+<body>
+<div class="tabbar" role="tablist">
+  <button data-tab="fin" role="tab">量杯账本</button>
+  <button data-tab="sch" role="tab">日程</button>
+  <button data-tab="chk" role="tab">打卡</button>
+</div>
+<main>
+  <iframe id="if-fin" title="量杯账本"></iframe>
+  <iframe id="if-sch" title="日程"></iframe>
+  <iframe id="if-chk" title="打卡"></iframe>
+</main>
+
+<script type="application/json" id="fin-seed">{"cats":[{"id":"cmu6rk1ykh4ai","name":"米鸥","icon":"i-bowl"},{"id":"cmu6rl4cja007","name":"做饭-饮食","icon":"i-car"},{"id":"cmu6rlt6b6ks2","name":"娱乐/采购","icon":"i-bag"},{"id":"cmu6rnj1n94s4","name":"出行/差旅","icon":"i-home"}],"budgets":{"cmu6rk1ykh4ai":400,"cmu6rl4cja007":1500,"cmu6rnj1n94s4":1700,"cmu6rlt6b6ks2":300},"accounts":[{"id":"a_icbc","name":"工行储蓄卡","type":"debit","balance":0,"last":null},{"id":"a_abc","name":"农行储蓄卡","type":"debit","balance":2656.73,"last":0},{"id":"a_cash","name":"现金","type":"cash","balance":1500,"last":0},{"id":"a_cc","name":"信用卡","type":"credit","balance":30.6,"last":null,"dueDay":2,"settled":"2026-09","limit":7500,"billDue":"2026-10-02"},{"id":"amu6reauf8ex8","name":"存款","type":"debit","balance":3780.97,"last":null},{"id":"amu6s4h7v3w4n","name":"美团贷款","type":"loan","balance":5723.85,"last":null,"dueDay":2,"settled":"2026-09","amt":5723.85}],"tx":[{"id":"tmu6z8dfc5ytr","ts":"2026-09-18T13:10:54.456Z","type":"expense","amount":30.6,"accountId":"a_cc","category":"cmu6rlt6b6ks2","note":null}]}</script>
+
+<template id="tpl-fin">
+<style>
+  :root { color-scheme: light dark; }
+  html, body { margin: 0; padding: 0; background: transparent; }
+  body {
+    font-family: var(--kimi-font-sans, sans-serif);
+    font-size: 16px;
+    line-height: 24px;
+    color: var(--kimi-color-text-primary);
+    overflow-y: auto;
+  }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  svg text { font-family: var(--kimi-font-sans, sans-serif); }
+
+  .wrap {
+    width: 100%;
+    box-sizing: border-box;
+    padding-block-start: var(--kimi-space-4);
+    padding-inline: var(--kimi-space-4);
+    padding-block-end: var(--kimi-space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--kimi-space-4);
+  }
+  .num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+
+  /* ---------- header ---------- */
+  .head { display: flex; align-items: baseline; justify-content: space-between; }
+  .head .title { font-size: 17px; font-weight: 500; }
+  .head .month { font-size: 12px; color: var(--kimi-color-text-tertiary); }
+
+  /* ---------- budget summary ---------- */
+  .bsum { border: 1px solid var(--kimi-color-border); border-radius: var(--kimi-radius-panel); padding: var(--kimi-space-3) var(--kimi-space-4); display: flex; align-items: center; justify-content: space-between; gap: var(--kimi-space-3); }
+  .bsum .l { display: flex; flex-direction: column; gap: 2px; }
+  .bsum .l .t { font-size: 13px; color: var(--kimi-color-text-secondary); display: flex; align-items: center; gap: 6px; }
+  .bsum .l .t svg { width: 16px; height: 16px; }
+  .bsum .l .v { font-size: 24px; font-weight: 500; }
+  .bsum .l .v.neg { color: var(--kimi-color-danger); }
+  .bsum .r { text-align: right; display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--kimi-color-text-tertiary); }
+  .bsum .r b { font-weight: 500; color: var(--kimi-color-text-secondary); }
+  .bpace { display: flex; justify-content: flex-end; }
+
+  /* ---------- countdown rows (budget & debt share this) ---------- */
+  .blist { display: flex; flex-direction: column; gap: var(--kimi-space-2); }
+  .brow { border: 1px solid var(--kimi-color-border); border-radius: var(--kimi-radius-panel); padding: 10px 12px; display: flex; flex-direction: column; gap: 7px; cursor: pointer; }
+  .brow:hover, .brow:focus-visible { border-color: var(--kimi-color-text-tertiary); outline: none; }
+  .brow.nob { border-style: dashed; }
+  .brow .r1 { display: flex; align-items: center; gap: var(--kimi-space-2); }
+  .brow .ico { width: 28px; height: 28px; border-radius: var(--kimi-radius-button); background: var(--kimi-color-surface-muted); display: inline-flex; align-items: center; justify-content: center; flex: none; }
+  .brow .ico svg { width: 16px; height: 16px; }
+  .brow .nm { font-size: 13px; color: var(--kimi-color-text-secondary); display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .brow .nm .sub { font-size: 12px; color: var(--kimi-color-text-tertiary); }
+  .brow .rem { margin-inline-start: auto; font-size: 16px; font-weight: 500; flex: none; }
+  .brow .rem.neg, .brow .rem .neg { color: var(--kimi-color-danger); }
+  .brow .rem.warn, .brow .rem .warn { color: var(--kimi-color-warning); }
+  .brow .rem .ok { color: var(--kimi-color-positive); }
+  .brow .rem.mini { font-size: 13px; font-weight: 400; color: var(--kimi-color-text-tertiary); }
+  .brow .track { height: 6px; border-radius: var(--kimi-radius-full); background: color-mix(in srgb, var(--kimi-color-border) 45%, transparent); overflow: hidden; }
+  .brow .fill { height: 100%; border-radius: var(--kimi-radius-full); background: var(--kimi-color-text-primary); transition: width var(--t-normal, 240ms) var(--ease-out, ease-out); }
+  .brow .fill.warn { background: var(--kimi-color-warning); }
+  .brow .fill.danger { background: var(--kimi-color-danger); }
+  .brow .fill.ok { background: var(--kimi-color-positive); }
+
+  /* ---------- budget tiles (量杯方块) ---------- */
+  .btiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: var(--kimi-space-2); }
+  .btile { position: relative; aspect-ratio: 1 / 1; border: 1px solid var(--kimi-color-border); border-radius: var(--kimi-radius-panel); overflow: hidden; cursor: pointer; display: flex; }
+  .btile:hover, .btile:focus-visible { border-color: var(--kimi-color-text-tertiary); outline: none; }
+  .btile .water { position: absolute; inset-inline: 0; bottom: 0; background: color-mix(in srgb, var(--kimi-color-positive) 24%, transparent); transition: height var(--t-normal, 240ms) var(--ease-out, ease-out); }
+  .btile .water.warn { background: color-mix(in srgb, var(--kimi-color-warning) 32%, transparent); }
+  .btile.burst { border-color: color-mix(in srgb, var(--kimi-color-danger) 55%, transparent); background: color-mix(in srgb, var(--kimi-color-danger) 7%, transparent); animation: bshake .45s ease; }
+  .btile.burst .water { background: color-mix(in srgb, var(--kimi-color-danger) 20%, transparent); }
+  .btile .crack { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+  .btile .in { position: relative; z-index: 1; padding: 10px 12px; display: flex; flex-direction: column; width: 100%; box-sizing: border-box; }
+  .btile .top { display: flex; align-items: center; gap: 6px; }
+  .btile .top svg { width: 15px; height: 15px; color: var(--kimi-color-text-secondary); flex: none; }
+  .btile .top .nm { font-size: 12px; color: var(--kimi-color-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .btile .mid { margin-block: auto; display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+  .btile .mid .v { font-size: 21px; font-weight: 500; }
+  .btile .mid .v.neg { color: var(--kimi-color-danger); }
+  .btile .mid .v.warn { color: var(--kimi-color-warning); }
+  .btile .mid .pc { font-size: 12px; color: var(--kimi-color-text-tertiary); }
+  .btile .bot { font-size: 11px; color: var(--kimi-color-text-tertiary); }
+  .btile .tag { position: absolute; top: 8px; right: 8px; z-index: 2; font-size: 10px; padding: 1px 7px; border-radius: var(--kimi-radius-full); background: var(--kimi-color-danger); color: #fff; }
+  .btile.needb { border-style: dashed; border-color: var(--kimi-color-warning); animation: bpulse 1.6s ease-in-out infinite; }
+  .btile.needb .hint { margin: auto; font-size: 12px; color: var(--kimi-color-warning); text-align: center; display: inline-flex; align-items: center; gap: 5px; }
+  .btile.needb .hint svg { width: 15px; height: 15px; }
+  .btiles .badd { aspect-ratio: 1 / 1; align-self: stretch; }
+  @keyframes bshake { 0%,100% { transform: translate(0,0); } 20% { transform: translate(-2px,1px); } 40% { transform: translate(2px,-1px); } 60% { transform: translate(-1px,-1px); } 80% { transform: translate(1px,1px); } }
+  @keyframes bpulse { 0%,100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--kimi-color-warning) 45%, transparent); } 50% { box-shadow: 0 0 0 5px transparent; } }
+  .badd { border: 1px dashed var(--kimi-color-border); border-radius: var(--kimi-radius-panel); background: transparent; padding-block: 9px; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--kimi-color-text-tertiary); cursor: pointer; font-size: 13px; }
+  .badd:hover { color: var(--kimi-color-text-primary); border-color: var(--kimi-color-text-tertiary); }
+  .badd svg { width: 14px; height: 14px; }
+
+  /* ---------- section titles ---------- */
+  .sec { display: flex; align-items: center; justify-content: space-between; margin-block-end: var(--kimi-space-3); }
+  .sec .t { font-size: 14px; font-weight: 500; color: var(--kimi-color-text-secondary); }
+  .sec .tot { font-size: 12px; color: var(--kimi-color-text-tertiary); }
+  .sec .tot b { font-weight: 500; color: var(--kimi-color-text-secondary); }
+  .sec .link { display: inline-flex; align-items: center; gap: 5px; border: none; background: transparent; cursor: pointer; font-size: 13px; color: var(--kimi-color-text-tertiary); padding: 4px 8px; border-radius: var(--kimi-radius-button); }
+  .sec .link:hover { background: var(--kimi-color-surface-muted); color: var(--kimi-color-text-primary); }
+  .sec .link svg { width: 14px; height: 14px; }
+
+  /* ---------- accounts ---------- */
+  .accs { display: grid; grid-template-columns: 1fr 1fr; gap: var(--kimi-space-3); }
+  .acc { position: relative; border: 1px solid var(--kimi-color-border); border-radius: var(--kimi-radius-panel); padding: var(--kimi-space-3); display: flex; flex-direction: column; gap: var(--kimi-space-1); cursor: pointer; }
+  .acc:hover, .acc:focus-visible { border-color: var(--kimi-color-text-tertiary); outline: none; }
+  .acc .top { display: flex; align-items: center; gap: var(--kimi-space-2); }
+  .acc .ico { width: 30px; height: 30px; border-radius: var(--kimi-radius-button); background: var(--kimi-color-surface-muted); display: inline-flex; align-items: center; justify-content: center; flex: none; }
+  .acc .ico svg { width: 18px; height: 18px; }
+  .acc .name { font-size: 13px; color: var(--kimi-color-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .acc .bal { font-size: 19px; font-weight: 500; }
+  .acc .sub { font-size: 12px; color: var(--kimi-color-text-tertiary); min-height: 16px; }
+  .acc .sub .up { color: var(--kimi-color-positive); }
+  .acc .sub .down { color: var(--kimi-color-text-tertiary); }
+  .acc .acts { position: absolute; top: 6px; right: 6px; display: flex; gap: 2px; opacity: 0; transition: opacity var(--t-fast, 140ms) var(--ease-out, ease-out); }
+  .acc:hover .acts, .acc:focus-within .acts { opacity: 1; }
+  .acc .acts button { width: 24px; height: 24px; border-radius: var(--kimi-radius-button); border: none; background: transparent; color: var(--kimi-color-text-tertiary); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+  .acc .acts button:hover { background: var(--kimi-color-surface-muted); color: var(--kimi-color-text-primary); }
+  .acc .acts button.danger:hover { color: var(--kimi-color-danger); }
+  .acc .acts svg { width: 14px; height: 14px; }
+  .acc-add { border: 1px dashed var(--kimi-color-border); border-radius: var(--kimi-radius-panel); background: transparent; min-height: 92px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--kimi-space-1); color: var(--kimi-color-text-tertiary); cursor: pointer; font-size: 13px; }
+  .acc-add:hover { color: var(--kimi-color-text-primary); border-color: var(--kimi-color-text-tertiary); }
+  .acc-add svg { width: 18px; height: 18px; }
+
+  /* ---------- account menu ---------- */
+  .amenu { display: flex; flex-direction: column; gap: var(--kimi-space-2); }
+  .amenu button { display: flex; align-items: center; gap: var(--kimi-space-3); padding: 11px 12px; border-radius: var(--kimi-radius-panel); border: 1px solid var(--kimi-color-border); background: transparent; cursor: pointer; font-size: 15px; }
+  .amenu button:hover { background: var(--kimi-color-surface-muted); }
+  .amenu button svg { width: 17px; height: 17px; flex: none; }
+  .amenu button.danger { color: var(--kimi-color-danger); border-color: color-mix(in srgb, var(--kimi-color-danger) 35%, transparent); }
+  .amenu button.danger:hover { background: color-mix(in srgb, var(--kimi-color-danger) 10%, transparent); }
+  .amenu .balshow { display: flex; flex-direction: column; gap: 2px; padding-block-end: var(--kimi-space-1); }
+  .amenu .balshow .l { font-size: 13px; color: var(--kimi-color-text-tertiary); }
+  .amenu .balshow .v { font-size: 26px; font-weight: 500; }
+
+  /* ---------- transactions ---------- */
+  .tx { display: flex; flex-direction: column; }
+  .tx .row { display: flex; align-items: center; gap: var(--kimi-space-3); padding-block: 9px; border-block-start: 1px solid color-mix(in srgb, var(--kimi-color-border) 55%, transparent); position: relative; }
+  .tx .row:first-child { border-block-start: none; }
+  .tx .ico { width: 30px; height: 30px; border-radius: var(--kimi-radius-button); background: var(--kimi-color-surface-muted); display: inline-flex; align-items: center; justify-content: center; flex: none; }
+  .tx .ico svg { width: 16px; height: 16px; }
+  .tx .mid { flex: 1; min-width: 0; }
+  .tx .tt { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tx .tt .note { color: var(--kimi-color-text-tertiary); font-size: 12px; margin-inline-start: var(--kimi-space-2); }
+  .tx .dd { font-size: 12px; color: var(--kimi-color-text-tertiary); }
+  .tx .amt { font-size: 15px; font-weight: 500; flex: none; }
+  .tx .amt.out { color: var(--kimi-color-text-primary); }
+  .tx .amt.in { color: var(--kimi-color-positive); }
+  .tx .del { position: absolute; right: 0; top: 50%; transform: translateY(-50%); width: 24px; height: 24px; border-radius: var(--kimi-radius-button); border: none; background: var(--kimi-color-surface-muted); color: var(--kimi-color-text-tertiary); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; opacity: 0; transition: opacity var(--t-fast, 140ms) var(--ease-out, ease-out); }
+  .tx .row:hover .del { opacity: 1; }
+  .tx .del:hover { color: var(--kimi-color-danger); }
+  .tx .del svg { width: 14px; height: 14px; }
+  .empty { font-size: 13px; color: var(--kimi-color-text-tertiary); padding-block: var(--kimi-space-2); }
+
+  /* ---------- modal ---------- */
+  .mask { position: fixed; inset: 0; background: color-mix(in srgb, var(--kimi-color-text-primary) 28%, transparent); display: none; align-items: flex-end; justify-content: center; z-index: 50; }
+  .mask.open { display: flex; }
+  .sheet { width: 100%; max-width: 460px; background: var(--kimi-color-surface-raised); border-radius: var(--kimi-radius-large) var(--kimi-radius-large) 0 0; padding: var(--kimi-space-5) var(--kimi-space-4) var(--kimi-space-6); display: flex; flex-direction: column; gap: var(--kimi-space-4); max-height: 86%; overflow-y: auto; box-sizing: border-box; }
+  .sheet .sh { display: flex; align-items: center; justify-content: space-between; }
+  .sheet .sh .t { font-size: 17px; font-weight: 500; }
+  .sheet .sh .x { width: 28px; height: 28px; border-radius: var(--kimi-radius-button); border: none; background: transparent; color: var(--kimi-color-text-tertiary); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+  .sheet .sh .x:hover { background: var(--kimi-color-surface-muted); color: var(--kimi-color-text-primary); }
+  #m-err { font-size: 13px; color: var(--kimi-color-danger); }
+  .catlink { display: flex; align-items: center; justify-content: space-between; gap: var(--kimi-space-2); width: 100%; padding: 9px 12px; border-radius: var(--kimi-radius-input); border: 1px solid var(--kimi-color-border); background: transparent; cursor: pointer; font-size: 15px; }
+  .catlink .go { font-size: 12px; color: var(--kimi-color-text-tertiary); flex: none; }
+  .catlink:hover { background: var(--kimi-color-surface-muted); }
+  .sheet .sh .x svg { width: 16px; height: 16px; }
+  .fld { display: flex; flex-direction: column; gap: 6px; }
+  .fld > span { font-size: 13px; color: var(--kimi-color-text-secondary); }
+  .fld input, .fld select { padding: 9px 12px; border-radius: var(--kimi-radius-input); border: 1px solid var(--kimi-color-border); background: transparent; outline: none; font-size: 15px; }
+  .fld input:focus, .fld select:focus { border-color: var(--kimi-color-text-primary); }
+  .fld input:disabled { color: var(--kimi-color-text-primary); background: var(--kimi-color-surface-muted); opacity: 1; }
+  .fld .hint { font-size: 12px; color: var(--kimi-color-text-tertiary); }
+  .chips { display: flex; flex-wrap: wrap; gap: var(--kimi-space-2); }
+  .chips button { display: inline-flex; align-items: center; gap: 5px; padding: 6px 11px; border-radius: var(--kimi-radius-chip); border: 1px solid var(--kimi-color-border); background: transparent; cursor: pointer; font-size: 13px; color: var(--kimi-color-text-secondary); }
+  .chips button svg { width: 14px; height: 14px; }
+  .chips button.on { border-color: var(--kimi-color-text-primary); color: var(--kimi-color-text-primary); background: var(--kimi-color-surface-muted); }
+  .catnew { flex: 1; min-width: 150px; display: inline-flex; }
+  .catnew input { flex: 1; padding: 6px 10px; border-radius: var(--kimi-radius-chip); border: 1px solid var(--kimi-color-text-primary); background: transparent; font-size: 13px; outline: none; }
+  .sheet .foot { display: flex; gap: var(--kimi-space-3); margin-block-start: var(--kimi-space-1); }
+  .sheet .foot .kbtn { flex: 1; padding-block: 10px; border-radius: var(--kimi-radius-button); border: none; cursor: pointer; font-size: 15px; font-weight: 500; }
+  .kbtn.pri { background: var(--kimi-color-text-primary); color: var(--kimi-color-surface); }
+  .kbtn.ghost { background: transparent; border: 1px solid var(--kimi-color-border); color: var(--kimi-color-text-secondary); }
+  .kbtn.danger { background: transparent; border: 1px solid color-mix(in srgb, var(--kimi-color-danger) 40%, transparent); color: var(--kimi-color-danger); }
+  .kbtn.sm { align-self: flex-start; padding: 7px 14px; font-size: 13px; flex: none; }
+</style>
+
+
+
+<!-- ======= custom inline icons (host library has no finance icons) ======= -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 7.5h14a2.5 2.5 0 0 1 2.5 2.5v7A2.5 2.5 0 0 1 18 19.5H6A2.5 2.5 0 0 1 3.5 17V8.5A1.5 1.5 0 0 1 5 7h13"/>
+      <path d="M15.8 13.2h.01"/>
+    </symbol>
+    <symbol id="i-card" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="5.5" width="18" height="13" rx="2.2"/>
+      <path d="M3 10h18"/>
+    </symbol>
+    <symbol id="i-cash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="7" width="18" height="10" rx="1.8"/>
+      <circle cx="12" cy="12" r="2.6"/>
+      <path d="M6.2 10.2v.01M17.8 13.8v.01"/>
+    </symbol>
+    <symbol id="i-credit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="5.5" width="18" height="13" rx="2.2"/>
+      <path d="M3 9.5h18M6.5 14.5h4"/>
+    </symbol>
+    <symbol id="i-loan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="5.5" y="3.5" width="13" height="17" rx="2"/>
+      <path d="M9 7.5l3 3.6 3-3.6M12 11.1v5.4M9.3 13h5.4M9.3 15.3h5.4"/>
+    </symbol>
+    <symbol id="i-bowl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 12.5h16c0 4.2-3.4 7.5-8 7.5s-8-3.3-8-7.5z"/>
+      <path d="M9 3.5v5M12.4 3.5v6"/>
+    </symbol>
+    <symbol id="i-car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4.5 15.5L6 10a2 2 0 0 1 2-1.5h8a2 2 0 0 1 2 1.5l1.5 5.5"/>
+      <path d="M4 15.5h16v3h-2.4v-1.4H6.4V18.5H4z"/>
+      <circle cx="8" cy="18.6" r=".01"/><circle cx="16" cy="18.6" r=".01"/>
+    </symbol>
+    <symbol id="i-bag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5.5 8h13l-1.1 11.5a1.8 1.8 0 0 1-1.8 1.5H8.4a1.8 1.8 0 0 1-1.8-1.5z"/>
+      <path d="M9 8V6.5a3 3 0 0 1 6 0V8"/>
+    </symbol>
+    <symbol id="i-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4.5 11L12 4l7.5 7v8h-4.6v-4.6h-5.8V19H4.5z"/>
+    </symbol>
+    <symbol id="i-game" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3.5" y="8.5" width="17" height="8.5" rx="4.25"/>
+      <path d="M8 11v3M6.5 12.5h3"/>
+      <path d="M15.4 11.6v.01M17.6 13.6v.01"/>
+    </symbol>
+    <symbol id="i-med" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="8"/>
+      <path d="M12 8.6v6.8M8.6 12h6.8"/>
+    </symbol>
+    <symbol id="i-gift" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="4.5" y="11" width="15" height="9" rx="1.5"/>
+      <path d="M12 11v9M4.5 14.5h15"/>
+      <path d="M12 11c-1.2-3.4-4.8-4-5.8-1.6-.9 2.2 2.4 2.9 5.8 1.6 3.4 1.3 6.7.6 5.8-1.6-1-2.4-4.6-1.8-5.8 1.6z"/>
+    </symbol>
+    <symbol id="i-more" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="5.5" cy="12" r=".8"/><circle cx="12" cy="12" r=".8"/><circle cx="18.5" cy="12" r=".8"/>
+    </symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4.5 19.5h4l10-10a2.1 2.1 0 0 0-3-3l-10 10z"/>
+    </symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 12h12"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 6v12M6 12h12"/></symbol>
+    <symbol id="i-swap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M7 4L3.5 7.5 7 11M3.5 7.5H17"/><path d="M17 13l3.5 3.5L17 20M20.5 16.5H7"/>
+    </symbol>
+    <symbol id="i-save" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 4h11l3.5 3.5V20H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/>
+    </symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4.5 6.5h15M9.5 6V4.5h5V6M6.5 6.5l.8 13h9.4l.8-13"/>
+    </symbol>
+    <symbol id="i-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  </defs>
+</svg>
+
+<div class="wrap">
+  <div class="head">
+    <span class="title">我的账本</span>
+    <span class="month" id="v-month"></span>
+  </div>
+
+  <!-- budget: total summary + per-category countdown bars -->
+  <section>
+    <div class="sec"><span class="t">分类预算</span></div>
+    <div class="bsum" id="v-bsum"></div>
+    <div class="bpace" id="v-bpace" style="margin-block-start:var(--kimi-space-2)"></div>
+    <div class="blist btiles" id="v-blist" style="margin-block-start:var(--kimi-space-3)"></div>
+  </section>
+
+  <!-- debts: installment loans pop up on due day; credit cards stay -->
+  <section id="v-debtsec">
+    <div class="sec"><span class="t">负债 · 还款</span><span style="display:inline-flex;align-items:center;gap:var(--kimi-space-2)"><span class="tot" id="v-debttot"></span><button class="link" id="b-debtmgmt"><svg><use href="#i-edit"/></svg>管理</button></span></div>
+    <div class="blist" id="v-debts"></div>
+  </section>
+
+  <!-- accounts (assets only: debit / cash) -->
+  <section>
+    <div class="sec">
+      <span class="t">我的账户</span>
+      <button class="link" id="b-trf"><svg><use href="#i-swap"/></svg>转账</button>
+    </div>
+    <div class="accs" id="v-accs"></div>
+  </section>
+
+  <!-- recent -->
+  <section>
+    <div class="sec"><span class="t">最近流水</span></div>
+    <div class="tx" id="v-tx"></div>
+  </section>
+</div>
+
+<!-- modal -->
+<div class="mask" id="v-mask">
+  <div class="sheet" id="v-sheet" role="dialog" aria-modal="true"></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------------- data ---------------- */
+  /* categories are fully user-defined: { id, name, icon } stored in state.cats */
+  var ICON_POOL = ["i-bowl", "i-car", "i-bag", "i-home", "i-game", "i-med", "i-gift", "i-more"];
+  var ACC_TYPES = {
+    debit:  { name: "储蓄卡", icon: "i-card" },
+    cash:   { name: "现金",   icon: "i-cash" },
+    credit: { name: "信用卡", icon: "i-credit" },
+    loan:   { name: "信用贷", icon: "i-loan" }
+  };
+  /* legacy preset ids -> display names, only used to migrate old data */
+  var LEGACY_CATS = {
+    food: ["餐饮", "i-bowl"], transport: ["交通加油", "i-car"], shopping: ["购物", "i-bag"],
+    home: ["居家", "i-home"], fun: ["娱乐", "i-game"], health: ["医疗健康", "i-med"],
+    social: ["人情社交", "i-gift"], other: ["其他", "i-more"]
+  };
+
+  function defaults() {
+    return {
+      cats: [],
+      budgets: {},
+      accounts: [
+        { id: "a_icbc",  name: "工行储蓄卡", type: "debit",  balance: 0, last: null },
+        { id: "a_abc",   name: "农行储蓄卡", type: "debit",  balance: 0, last: null },
+        { id: "a_cash",  name: "现金",       type: "cash",   balance: 0, last: null },
+        { id: "a_cc",    name: "信用卡",     type: "credit", balance: 0, last: null, dueDay: 2, limit: 7500 },
+        { id: "a_meituan", name: "美团信用贷", type: "loan", balance: 0, last: null, dueDay: 15, amt: 5723.85 }
+      ],
+      tx: []
+    };
+  }
+  var state = defaults();
+
+  /* ---------------- utils ---------------- */
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function fmt(n) { n = Math.round(n * 100) / 100; return "¥" + n.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function fmtS(n) { return (n > 0 ? "+" : "") + fmt(n); }
+  function uid(p) { return p + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+  function monthKey(d) { return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"); }
+  function nowISO() { return new Date().toISOString(); }
+  function parseAmt(v) { var n = parseFloat(v); return isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null; }
+  function ico(name, cls) { return '<svg class="' + (cls || "") + '" aria-hidden="true"><use href="#' + name + '"/></svg>'; }
+  function accById(id) { for (var i = 0; i < state.accounts.length; i++) if (state.accounts[i].id === id) return state.accounts[i]; return null; }
+  function catById(id) {
+    for (var i = 0; i < state.cats.length; i++) if (state.cats[i].id === id) return state.cats[i];
+    return { id: id || "none", name: "未分类", icon: "i-more" };
+  }
+  function isDueAcc(a) { return a && (a.type === "credit" || a.type === "loan"); }
+  /* account name + live balance for <option> labels */
+  function accOptLabel(a) {
+    return isDueAcc(a)
+      ? esc(a.name) + "（待还 " + fmt(Math.max(0, a.balance)) + "）"
+      : esc(a.name) + " · " + fmt(a.balance);
+  }
+  function nextIcon() {
+    var best = ICON_POOL[0], bn = 1e9;
+    ICON_POOL.forEach(function (ic) {
+      var n = 0;
+      state.cats.forEach(function (c) { if (c.icon === ic) n++; });
+      if (n < bn) { bn = n; best = ic; }
+    });
+    return best;
+  }
+  function addCat(name) {
+    var cat = { id: uid("c"), name: name, icon: nextIcon() };
+    state.cats.push(cat);
+    return cat;
+  }
+  /* days until due date + cycle progress (0..1 elapsed) */
+  function dueInfo(a, now) {
+    if (!a.dueDay) return null;
+    var y = now.getFullYear(), m = now.getMonth(), dd = a.dueDay;
+    var due = new Date(y, m, dd, 23, 59, 59);
+    if (now.getTime() > due.getTime()) {
+      return { overdue: true, days: Math.max(1, Math.floor((now.getTime() - due.getTime()) / 86400000)), past: 1 };
+    }
+    var prev = new Date(y, m - 1, dd);
+    var past = (now.getTime() - prev.getTime()) / (due.getTime() - prev.getTime());
+    return { overdue: false, days: Math.max(0, Math.ceil((due.getTime() - now.getTime()) / 86400000)), past: Math.max(0, Math.min(1, past)) };
+  }
+  /* next due date strictly AFTER today, as "YYYY-MM-DD" (credit-card bill anchor) */
+  function nextDueKey(a, now) {
+    var dd = a.dueDay || 2;
+    var y = now.getFullYear(), m = now.getMonth();
+    var d = new Date(y, m, dd);
+    if (now.getTime() >= new Date(y, m, dd, 23, 59, 59).getTime()) d = new Date(y, m + 1, dd);
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  }
+  /* keep billDue in sync with the outstanding balance of a credit card:
+     balance appears -> anchor to the next due date; balance cleared -> drop anchor */
+  function syncBillDue(acc) {
+    if (!acc || acc.type !== "credit") return;
+    if (acc.balance > 0) { if (!acc.billDue) acc.billDue = nextDueKey(acc, new Date()); }
+    else acc.billDue = null;
+  }
+
+  /* ---------------- persistence ---------------- */
+  function persist() {
+    try { localStorage.setItem("cup-ledger-v1", JSON.stringify(state)); } catch (e) {}
+  }
+  /* old data (fixed preset categories) -> user-defined categories */
+  function migrateCats(d) {
+    var ids = [];
+    var pushId = function (id) { if (id && ids.indexOf(id) < 0) ids.push(id); };
+    if (d.budgets && typeof d.budgets === "object") Object.keys(d.budgets).forEach(pushId);
+    if (Array.isArray(d.tx)) d.tx.forEach(function (t) { if (t && t.type === "expense") pushId(t.category); });
+    return ids.map(function (id) {
+      if (LEGACY_CATS[id]) return { id: id, name: LEGACY_CATS[id][0], icon: LEGACY_CATS[id][1] };
+      return { id: id, name: id, icon: nextIcon() };
+    });
+  }
+  /* one-time seed / correction of the owner's real account parameters */
+  function seedAccounts() {
+    state.accounts.forEach(function (a) {
+      if (a.type === "credit") {
+        if (!a.limit) a.limit = 7500;
+        if (a.dueDay == null) a.dueDay = 2;
+        /* 机主确认本期已还清：清掉预置的未还金额（不动已记的流水） */
+        if (a.balance === 3824.48 && !state.tx.some(function (t) { return t.accountId === a.id; })) a.balance = 0;
+        /* 旧数据没有账单锚点：未还 > 0 的锚到下一个还款日，避免误显示逾期 */
+        if (a.balance > 0 && !a.billDue) a.billDue = nextDueKey(a, new Date());
+        /* 负数为异常状态（历史上多扣造成）：按流水重算未还，避免被 0 掩盖 */
+        if (a.balance < 0) {
+          var s = 0;
+          state.tx.forEach(function (t) {
+            if (t.type === "expense" && t.accountId === a.id) s += t.amount;
+            if (t.type === "repay" && t.toId === a.id) s -= t.amount;
+          });
+          a.balance = Math.max(0, r2(s));
+          a.last = null;
+          a.billDue = a.balance > 0 ? nextDueKey(a, new Date()) : null;
+        }
+      } else if (a.type === "loan") {
+        /* 机主确认美团贷还款日为每月 2 号（纠正早期的 15 号默认） */
+        if (a.id === "a_meituan" && a.dueDay === 15) a.dueDay = 2;
+        if (!a.amt && a.balance > 0) a.amt = a.balance;
+        /* 无流水的美团贷按"本期已还"处理，避免误显示逾期 */
+        if (a.id === "a_meituan" && !state.tx.some(function (t) { return t.accountId === a.id || t.fromId === a.id || t.toId === a.id; })) {
+          a.balance = 0;
+          a.settled = monthKey(new Date());
+        }
+      }
+    });
+  }
+  function load(cb) {
+    var raw = null;
+    try { raw = localStorage.getItem("cup-ledger-v1"); } catch (e) {}
+    /* 首次使用：从看板迁移过来的账本数据 */
+    if (!raw && window.__FIN_SEED__) { raw = JSON.stringify(window.__FIN_SEED__); }
+    if (raw) {
+      try {
+        var d = JSON.parse(raw);
+        if (d && Array.isArray(d.accounts)) {
+          var base = defaults();
+          state.budgets = (d.budgets && typeof d.budgets === "object") ? d.budgets : {};
+          state.accounts = d.accounts.length ? d.accounts : base.accounts;
+          state.tx = Array.isArray(d.tx) ? d.tx : [];
+          state.cats = Array.isArray(d.cats) ? d.cats : migrateCats(d);
+        }
+      } catch (e) {}
+    }
+    seedAccounts();
+    cb();
+  }
+
+  /* ---------------- derived ---------------- */
+  function monthTx() {
+    var mk = monthKey(new Date());
+    return state.tx.filter(function (t) { return (t.ts || "").slice(0, 7) === mk; });
+  }
+  function spendByCat() {
+    var m = {};
+    monthTx().forEach(function (t) {
+      if (t.type === "expense") m[t.category || "none"] = (m[t.category || "none"] || 0) + t.amount;
+    });
+    return m;
+  }
+  function monthSpend() {
+    var m = spendByCat(), s = 0;
+    Object.keys(m).forEach(function (k) { s += m[k]; });
+    return s;
+  }
+
+  /* ---------------- render: budget ---------------- */
+  function renderBudget() {
+    var now = new Date();
+    var spentMap = spendByCat();
+    var totalSpend = monthSpend();
+    var totalBudget = 0;
+    state.cats.forEach(function (c) { totalBudget += state.budgets[c.id] || 0; });
+    var totalRemain = totalBudget - totalSpend;
+
+    /* summary card */
+    $("v-bsum").innerHTML =
+      '<div class="l"><span class="t">' + ico("i-wallet") + '本月还剩</span>' +
+      '<span class="v num' + (totalRemain < 0 ? " neg" : "") + '">' + fmt(totalRemain) + "</span></div>" +
+      '<div class="r"><span>分类预算 <b class="num">' + fmt(totalBudget) + "</b></span>" +
+      '<span>本月已花 <b class="num">' + fmt(totalSpend) + "</b></span></div>";
+
+    /* pace hint */
+    var paceEl = $("v-bpace"), paceHtml = "";
+    if (totalBudget > 0) {
+      var dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+      var spentR = totalSpend / totalBudget, elapsedR = now.getDate() / dim;
+      if (totalRemain < 0) paceHtml = '<span class="kimi-status kimi-status--danger">总支出已超预算 ' + fmt(-totalRemain) + "</span>";
+      else if (spentR > elapsedR * 1.15) paceHtml = '<span class="kimi-status kimi-status--warning">花钱速度偏快，注意控制</span>';
+      else if (totalSpend > 0) paceHtml = '<span class="kimi-status kimi-status--positive">消费节奏良好，继续保持</span>';
+    }
+    paceEl.innerHTML = paceHtml;
+
+    /* per-category tiles (量杯方块) */
+    var rows = state.cats.map(function (c) {
+      return { cat: c, budget: state.budgets[c.id] || 0, spent: spentMap[c.id] || 0 };
+    });
+    rows.sort(function (a, b) {
+      if (a.budget <= 0 && b.budget > 0) return -1;
+      if (a.budget > 0 && b.budget <= 0) return 1;
+      if (a.budget > 0 && b.budget > 0) return (b.spent / b.budget) - (a.spent / a.budget);
+      return b.spent - a.spent;
+    });
+
+    var html = "";
+    if (!rows.length) {
+      html = '<div class="empty">还没有消费类别。点下方「新建类别」创建你自己的分类（餐饮、加油、宠物……都可以），再记一笔支出，量杯就会亮起来。</div>';
+    }
+    var crack = '<svg class="crack" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><g stroke="var(--kimi-color-danger)" stroke-width="1.1" opacity=".65" fill="none"><polyline points="50,44 40,32 33,20"/><polyline points="50,44 63,36 73,24"/><polyline points="50,44 62,58 71,68"/><polyline points="50,44 38,56 28,68"/><polyline points="50,44 47,62 51,80"/></g></svg>';
+    rows.forEach(function (r) {
+      if (r.budget <= 0) {
+        html += '<div class="btile needb" tabindex="0" role="button" data-bcat="' + r.cat.id + '" aria-label="' + esc(r.cat.name) + '，设置预算">' +
+          '<span class="hint">' + ico(r.cat.icon) + '点我设预算</span></div>';
+        return;
+      }
+      var remain = r.budget - r.spent;
+      var ratio = remain / r.budget;
+      var over = remain < 0;
+      var low = !over && ratio < 0.25;
+      var fillH = over ? 100 : Math.max(0, Math.min(100, ratio * 100));
+      var vCls = over ? " neg" : low ? " warn" : "";
+      var pctTxt = over ? "杯碎了" : "剩 " + Math.round(ratio * 100) + "%";
+      html += '<div class="btile' + (over ? " burst" : "") + '" tabindex="0" role="button" data-bcat="' + r.cat.id + '" aria-label="' + esc(r.cat.name) + '，记支出">' +
+        (over ? '<span class="tag">超支</span>' + crack : "") +
+        '<div class="water' + (low ? " warn" : "") + '" style="height:' + fillH.toFixed(1) + '%"></div>' +
+        '<div class="in"><div class="top">' + ico(r.cat.icon) + '<span class="nm">' + esc(r.cat.name) + '</span></div>' +
+        '<div class="mid"><span class="v num' + vCls + '">' + fmt(remain) + '</span><span class="pc">' + pctTxt + '</span></div>' +
+        '<div class="bot num">已花 ' + fmt(r.spent) + ' / ' + fmt(r.budget) + '</div></div></div>';
+    });
+    html += '<button class="badd" id="b-addcat">' + ico("i-plus") + "<span>新建类别</span></button>";
+    $("v-blist").innerHTML = html;
+  }
+
+  /* ---------------- render: debts ---------------- */
+  /* loan (定期扣款): pops up ON the due day with 本期应还, hides once settled.
+     credit (循环信用): always visible; bar = used limit %, right = DDL countdown. */
+  function renderDebts() {
+    var now = new Date();
+    var mk = monthKey(now);
+    var y = now.getFullYear(), m = now.getMonth();
+    var debts = state.accounts.filter(isDueAcc);
+    $("v-debtsec").style.display = debts.length ? "" : "none";
+    if (!debts.length) { $("v-debts").innerHTML = ""; $("v-debttot").innerHTML = ""; return; }
+
+    var html = "", total = 0, dirty = false;
+    var browOpen = function (a, cls) {
+      var t = ACC_TYPES[a.type] || ACC_TYPES.credit;
+      return '<div class="brow' + cls + '" tabindex="0" role="button" data-debt="' + a.id + '" aria-label="' + esc(a.name) + '，还款">' +
+        '<div class="r1"><span class="ico">' + ico(t.icon) + "</span>";
+    };
+
+    /* 定期扣款类 */
+    state.accounts.filter(function (a) { return a.type === "loan"; }).forEach(function (a) {
+      if (!a.dueDay) {
+        html += browOpen(a, " nob") +
+          '<span class="nm"><span>' + esc(a.name) + '</span><span class="sub">待还 ' + fmt(Math.max(0, a.balance)) + " · 未设还款日</span></span>" +
+          '<span class="rem"><span class="rem mini">设还款日 →</span></span></div>' +
+          '<div class="track"><div class="fill" style="width:0%"></div></div></div>';
+        return;
+      }
+      var due = new Date(y, m, a.dueDay, 23, 59, 59);
+      var visible = now.getTime() >= due.getTime() && a.settled !== mk;
+      if (!visible) return; /* 未到还款日或本期已了结：完全隐藏 */
+      if (!(a.balance > 0) && a.amt > 0) { a.balance = a.amt; dirty = true; } /* 到还款日刷新本期应还 */
+      var amt = a.amt || a.balance;
+      var remaining = Math.max(0, a.balance);
+      total += remaining;
+      var days = Math.floor((now.getTime() - due.getTime()) / 86400000);
+      var statusHtml = days <= 0
+        ? '<span class="num">今日扣款</span>'
+        : '<span class="num neg">逾期 ' + days + " 天</span>";
+      var fillCls = days > 0 ? "danger" : "";
+      var fillW = amt > 0 ? Math.max(0, Math.min(100, remaining / amt * 100)) : 100;
+      var sub = "本期应还 " + fmt(amt) + (remaining > 0 && remaining < amt ? " · 剩余 " + fmt(remaining) : "");
+      html += browOpen(a, "") +
+        '<span class="nm"><span>' + esc(a.name) + '</span><span class="sub">' + sub + "</span></span>" +
+        '<span class="rem">' + statusHtml + "</span></div>" +
+        '<div class="track"><div class="fill ' + fillCls + '" style="width:' + fillW.toFixed(1) + '%"></div></div></div>';
+    });
+
+    /* 循环信用类 */
+    state.accounts.filter(function (a) { return a.type === "credit"; }).forEach(function (a) {
+      var used = Math.max(0, a.balance);
+      total += used;
+      var lim = a.limit || 0;
+      var pct = lim > 0 ? used / lim : 0;
+      var bd = (a.dueDay && a.billDue) ? new Date(a.billDue + "T23:59:59") : null;
+      var statusHtml, fillCls = "", fillW = Math.max(0, Math.min(100, pct * 100)), sub, rowCls = "";
+      if (a.balance < 0) {
+        statusHtml = '<span class="num neg">数据异常</span>';
+        fillCls = "danger"; rowCls = " nob";
+        sub = "未还被多扣成负数 · 点此条用「调整未还金额」修正";
+      } else if (used <= 0) {
+        statusHtml = '<span class="num ok">已结清</span>';
+        fillW = 0;
+        sub = (lim ? "额度 " + fmt(lim) + " · " : "") + (a.dueDay ? "DDL 每月 " + a.dueDay + " 日" : "未设还款日");
+      } else if (!bd) {
+        statusHtml = '<span class="rem mini">设还款日 →</span>';
+        fillW = 0; rowCls = " nob";
+        sub = "未还 " + fmt(used) + (lim ? " · 额度 " + fmt(lim) : "");
+      } else {
+        var days = Math.round((bd.getTime() - now.getTime()) / 86400000);
+        if (days < 0) {
+          statusHtml = '<span class="num neg">逾期 ' + (-days) + " 天</span>";
+          fillCls = "danger"; rowCls = " nob";
+        } else {
+          statusHtml = '<span class="num' + (days <= 5 ? " warn" : "") + '">' + (days === 0 ? "今日 DDL" : "还有 " + days + " 天") + "</span>";
+          fillCls = days <= 5 ? "warn" : (pct >= 1 ? "danger" : pct >= 0.8 ? "warn" : "");
+        }
+        sub = "未还 " + fmt(used) + (lim ? " · 已用额度 " + Math.round(pct * 100) + "%" : "") + " · DDL " + a.billDue.slice(5).replace("-", "/");
+      }
+      html += browOpen(a, rowCls) +
+        '<span class="nm"><span>' + esc(a.name) + '</span><span class="sub">' + sub + "</span></span>" +
+        '<span class="rem">' + statusHtml + "</span></div>" +
+        '<div class="track"><div class="fill ' + fillCls + '" style="width:' + fillW.toFixed(1) + '%"></div></div></div>';
+    });
+
+    if (dirty) persist();
+    html += '<button class="badd" id="b-adddebt">' + ico("i-plus") + "<span>添加负债</span></button>";
+    $("v-debts").innerHTML = html;
+    $("v-debttot").innerHTML = '共待还 <b class="num">' + fmt(total) + "</b>";
+  }
+
+  /* ---------------- render: accounts (assets only) ---------------- */
+  function renderAccounts() {
+    var html = "";
+    state.accounts.filter(function (a) { return !isDueAcc(a); }).forEach(function (a) {
+      var t = ACC_TYPES[a.type] || ACC_TYPES.debit;
+      var sub = "";
+      if (a.last != null && a.last !== a.balance) {
+        var d = a.balance - a.last;
+        sub = '较上次 <span class="' + (d > 0 ? "up" : "down") + ' num">' + fmtS(d) + "</span>";
+      }
+      html += '<div class="acc" tabindex="0" role="button" data-aid="' + a.id + '" aria-label="' + esc(a.name) + '，点按记收支">' +
+        '<div class="acts">' +
+        '<button data-act="bal" data-id="' + a.id + '" aria-label="记余额">' + ico("i-save") + "</button>" +
+        '<button data-act="del" data-id="' + a.id + '" aria-label="删除账户" class="danger">' + ico("i-trash") + "</button>" +
+        "</div>" +
+        '<div class="top"><span class="ico">' + ico(t.icon) + '</span><span class="name">' + esc(a.name) + "</span></div>" +
+        '<span class="bal num">' + fmt(a.balance) + "</span>" +
+        '<span class="sub">' + sub + "</span>" +
+        "</div>";
+    });
+    html += '<button class="acc-add" id="b-addacc">' + ico("i-plus") + "<span>添加账户</span></button>";
+    $("v-accs").innerHTML = html;
+  }
+
+  /* ---------------- tx balance effects (shared by delete / edit) ---------------- */
+  function r2(n) { return Math.round(n * 100) / 100; }
+  function revertTx(t) {
+    var acc;
+    if (t.type === "expense") {
+      acc = accById(t.accountId);
+      if (acc) {
+        if (isDueAcc(acc)) acc.balance = r2(acc.balance - t.amount);
+        else acc.balance = r2(acc.balance + t.amount);
+        syncBillDue(acc);
+      }
+    } else if (t.type === "income") {
+      acc = accById(t.accountId);
+      if (acc && !isDueAcc(acc)) acc.balance = r2(acc.balance - t.amount);
+    } else {
+      var f = accById(t.fromId), g = accById(t.toId);
+      if (f && !isDueAcc(f)) f.balance = r2(f.balance + t.amount);
+      if (t.type === "repay") {
+        if (g) {
+          g.balance = r2(g.balance + t.amount);
+          if (g.type === "loan") g.settled = null;
+          syncBillDue(g);
+        }
+      }
+      else if (g && !isDueAcc(g)) g.balance = r2(g.balance - t.amount);
+    }
+  }
+  function applyTx(t) {
+    var acc;
+    if (t.type === "expense") {
+      acc = accById(t.accountId);
+      if (acc) {
+        if (isDueAcc(acc)) acc.balance = r2(acc.balance + t.amount);
+        else acc.balance = r2(acc.balance - t.amount);
+        syncBillDue(acc);
+      }
+    } else if (t.type === "income") {
+      acc = accById(t.accountId);
+      if (acc && !isDueAcc(acc)) acc.balance = r2(acc.balance + t.amount);
+    } else {
+      var f = accById(t.fromId), g = accById(t.toId);
+      if (f && !isDueAcc(f)) f.balance = r2(f.balance - t.amount);
+      if (t.type === "repay") {
+        if (g) {
+          g.balance = r2(g.balance - t.amount);
+          if (g.type === "loan" && g.balance <= 0) { g.balance = 0; g.settled = monthKey(new Date()); }
+          syncBillDue(g);
+        }
+      }
+      else if (g && !isDueAcc(g)) g.balance = r2(g.balance + t.amount);
+    }
+  }
+
+  /* ---------------- render: transactions ---------------- */
+  function renderTx() {
+    var txs = state.tx.slice().sort(function (a, b) { return (b.ts || "").localeCompare(a.ts || ""); }).slice(0, 30);
+    var thtml = "";
+    if (!txs.length) thtml = '<div class="empty">暂无流水。</div>';
+    txs.forEach(function (t) {
+      var d = new Date(t.ts);
+      var dateStr = (d.getMonth() + 1) + "-" + String(d.getDate()).padStart(2, "0") + " " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+      var title, amountHtml, icon;
+      if (t.type === "expense") {
+        var c = catById(t.category);
+        var acc = accById(t.accountId);
+        title = esc(c.name) + (acc ? '<span class="note">' + esc(acc.name) + "</span>" : "");
+        amountHtml = '<span class="amt out num">-' + fmt(t.amount) + "</span>";
+        icon = c.icon;
+      } else if (t.type === "income") {
+        var acc2 = accById(t.accountId);
+        title = "收入" + (acc2 ? '<span class="note">' + esc(acc2.name) + "</span>" : "");
+        amountHtml = '<span class="amt in num">+' + fmt(t.amount) + "</span>";
+        icon = "i-plus";
+      } else if (t.type === "transfer") {
+        var f = accById(t.fromId), g = accById(t.toId);
+        title = "转账" + (f && g ? '<span class="note">' + esc(f.name) + " → " + esc(g.name) + "</span>" : "");
+        amountHtml = '<span class="amt num" style="color:var(--kimi-color-text-secondary)">' + fmt(t.amount) + "</span>";
+        icon = "i-swap";
+      } else {
+        var f2 = accById(t.fromId), g2 = accById(t.toId);
+        title = "还款" + (f2 && g2 ? '<span class="note">' + esc(f2.name) + " → " + esc(g2.name) + "</span>" : "");
+        amountHtml = '<span class="amt num" style="color:var(--kimi-color-text-secondary)">-' + fmt(t.amount) + "</span>";
+        icon = "i-credit";
+      }
+      thtml += '<div class="row" data-tid="' + t.id + '">' +
+        '<span class="ico">' + ico(icon) + "</span>" +
+        '<div class="mid"><div class="tt">' + title + (t.note ? '<span class="note">' + esc(t.note) + "</span>" : "") + '</div><div class="dd">' + dateStr + "</div></div>" +
+        amountHtml +
+        '<button class="del" data-tdel="' + t.id + '" aria-label="删除">' + ico("i-close") + "</button>" +
+        "</div>";
+    });
+    $("v-tx").innerHTML = thtml;
+  }
+
+  function render() {
+    var now = new Date();
+    $("v-month").textContent = now.getFullYear() + " 年 " + (now.getMonth() + 1) + " 月";
+    renderBudget();
+    renderDebts();
+    renderAccounts();
+    renderTx();
+  }
+
+  /* ---------------- modal / forms ---------------- */
+  var mask = null, sheet = null;
+  function openSheet(title, bodyHtml, onOk, okLabel, noFoot, extraFoot) {
+    sheet.innerHTML =
+      '<div class="sh"><span class="t">' + esc(title) + '</span><button class="x" id="m-x" aria-label="关闭">' + ico("i-close") + "</button></div>" +
+      bodyHtml +
+      (noFoot ? "" : '<div class="foot"><button class="kbtn ghost" id="m-cancel">取消</button>' + (extraFoot || "") + '<button class="kbtn pri" id="m-ok">' + esc(okLabel || "保存") + "</button></div>");
+    mask.classList.add("open");
+    $("m-x").onclick = closeSheet;
+    if (!noFoot) {
+      $("m-cancel").onclick = closeSheet;
+      $("m-ok").onclick = function () {
+        var r = onOk();
+        if (r === false) return;
+        if (typeof r === "string") { sheetErr(r); return; }
+        closeSheet();
+      };
+      if (extraFoot && $("m-extra")) $("m-extra").onclick = function () {
+        var r = onOk(true);
+        if (r === false) return;
+        if (typeof r === "string") { sheetErr(r); return; }
+        closeSheet();
+      };
+    }
+  }
+  function closeSheet() { mask.classList.remove("open"); sheet.innerHTML = ""; }
+  /* show an inline error inside the open sheet (onOk returns a message string) */
+  function sheetErr(msg) {
+    var foot = sheet.querySelector(".foot");
+    var el = $("m-err");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "m-err";
+      if (foot) sheet.insertBefore(el, foot); else sheet.appendChild(el);
+    }
+    el.textContent = msg;
+  }
+  function fld(label, inner, hint) {
+    return '<label class="fld"><span>' + esc(label) + "</span>" + inner + (hint ? '<span class="hint">' + esc(hint) + "</span>" : "") + "</label>";
+  }
+  function val(id) { var el = $(id); return el ? el.value.trim() : ""; }
+
+  /* --- custom categories: chips + inline "new" input --- */
+  function catChipsHtml(sel) {
+    var html = state.cats.map(function (c) {
+      return '<button type="button" data-cat="' + c.id + '"' + (c.id === sel ? ' class="on"' : "") + ">" + ico(c.icon) + esc(c.name) + "</button>";
+    }).join("");
+    html += '<button type="button" data-newcat>' + ico("i-plus") + "新建类别</button>";
+    return html;
+  }
+  function bindCatChips(container, getSel, setSel) {
+    container.addEventListener("click", function (e) {
+      var nb = e.target.closest("[data-newcat]");
+      if (nb) {
+        container.innerHTML = '<span class="catnew"><input id="f-newcat" type="text" placeholder="输入类别名，回车创建" autocomplete="off"></span>';
+        var inp = $("f-newcat");
+        if (inp) inp.focus();
+        var cancel = function () { container.innerHTML = catChipsHtml(getSel()); };
+        var commit = function () {
+          var name = inp ? inp.value.trim() : "";
+          if (!name) { cancel(); return; }
+          var cat = addCat(name);
+          persist();
+          setSel(cat.id);
+          container.innerHTML = catChipsHtml(cat.id);
+        };
+        if (inp) {
+          inp.addEventListener("keydown", function (ev) {
+            if (ev.key === "Enter") { ev.preventDefault(); commit(); }
+            else if (ev.key === "Escape") { ev.preventDefault(); cancel(); }
+          });
+        }
+        return;
+      }
+      var b = e.target.closest("[data-cat]");
+      if (!b) return;
+      setSel(b.getAttribute("data-cat"));
+      container.querySelectorAll("button").forEach(function (x) { x.classList.toggle("on", x === b); });
+    });
+  }
+
+  /* --- category editor: rename / budget / delete --- */
+  function catHasTx(catId) { return state.tx.some(function (t) { return t.category === catId; }); }
+  function formCatBudget(catId) {
+    var c = catById(catId);
+    if (!c || c.id === "none") return;
+    var cur = state.budgets[catId] || 0;
+    var spent = (spendByCat())[catId] || 0;
+    var hasTx = catHasTx(catId);
+    openSheet("类别 · " + c.name,
+      fld("类别名称", '<input id="f-cname" type="text" value="' + esc(c.name) + '">') +
+      fld("每月预算金额", '<input id="f-amt" type="number" inputmode="decimal" min="0" step="100" value="' + (cur || "") + '" placeholder="留空 = 不设预算">',
+        "本月" + c.name + "已花 " + fmt(spent) + (cur ? "，剩 " + fmt(cur - spent) : "")) +
+      (hasTx ? "" : '<button type="button" class="kbtn danger sm" id="f-delcat">删除此类别</button>'),
+      function (isClear) {
+        if (isClear) { delete state.budgets[catId]; persist(); render(); return true; }
+        var nm = val("f-cname");
+        if (!nm) return false;
+        c.name = nm;
+        var v = parseFloat(val("f-amt"));
+        if (isFinite(v) && v > 0) state.budgets[catId] = Math.round(v * 100) / 100;
+        else delete state.budgets[catId];
+        persist(); render(); return true;
+      }, "保存", false,
+      cur ? '<button class="kbtn danger" id="m-extra">清除预算</button>' : "");
+    var del = $("f-delcat");
+    if (del) del.onclick = function () {
+      if (catHasTx(catId)) return;
+      state.cats = state.cats.filter(function (x) { return x.id !== catId; });
+      delete state.budgets[catId];
+      persist(); render(); closeSheet();
+    };
+  }
+
+  /* --- create a category (standalone, from the budget list) --- */
+  function formAddCat() {
+    openSheet("新建类别",
+      fld("类别名称", '<input id="f-name" type="text" placeholder="如：餐饮、加油、宠物、健身……">') +
+      fld("每月预算金额（可选）", '<input id="f-amt" type="number" inputmode="decimal" min="0" step="100" placeholder="留空 = 先不设预算">'),
+      function () {
+        var name = val("f-name");
+        if (!name) return false;
+        var cat = addCat(name);
+        var v = parseFloat(val("f-amt"));
+        if (isFinite(v) && v > 0) state.budgets[cat.id] = Math.round(v * 100) / 100;
+        persist(); render(); return true;
+      }, "创建");
+  }
+
+  /* --- account menu: click an asset card -> actions for that account --- */
+  function formAccMenu(accId) {
+    var acc = accById(accId);
+    if (!acc) return;
+    var rows =
+      '<button type="button" data-m="exp">' + ico("i-minus") + "记支出</button>" +
+      '<button type="button" data-m="inc">' + ico("i-plus") + "记收入</button>" +
+      '<button type="button" data-m="bal">' + ico("i-save") + "记余额</button>";
+    var hasTx = state.tx.some(function (t) { return t.accountId === accId || t.fromId === accId || t.toId === accId; });
+    if (!hasTx) rows += '<button type="button" data-m="del" class="danger">' + ico("i-trash") + "删除此账户</button>";
+    openSheet(acc.name,
+      '<div class="amenu"><div class="balshow"><span class="l">当前余额</span><span class="v num">' + fmt(acc.balance) + "</span></div>" + rows + "</div>",
+      null, null, true);
+    sheet.querySelectorAll("[data-m]").forEach(function (b) {
+      b.onclick = function () {
+        var m = b.getAttribute("data-m");
+        closeSheet();
+        if (m === "exp") formExpense(accId);
+        else if (m === "inc") formIncome(accId);
+        else if (m === "bal") formBalance(accId);
+        else if (m === "del") {
+          state.accounts = state.accounts.filter(function (a) { return a.id !== accId; });
+          persist(); render();
+        }
+      };
+    });
+  }
+
+  /* --- manage all debts (including hidden loans, for self-correction) --- */
+  function formDebtMgmt() {
+    var now = new Date(), mk = monthKey(now);
+    var debts = state.accounts.filter(isDueAcc);
+    if (!debts.length) return;
+    var rows = debts.map(function (a) {
+      var isLoan = a.type === "loan", st;
+      if (isLoan) {
+        if (!a.dueDay) st = "定期扣款 · 未设还款日";
+        else if (a.settled === mk) st = "本期已还 · 隐藏中 · 下期 " + a.dueDay + " 日";
+        else st = "本期待还 " + fmt(Math.max(0, a.balance)) + " · 每期 " + fmt(a.amt || 0);
+      } else {
+        st = a.balance > 0 ? "未还 " + fmt(a.balance) + (a.limit ? " · 额度 " + fmt(a.limit) : "") : "已结清" + (a.limit ? " · 额度 " + fmt(a.limit) : "");
+      }
+      return '<button type="button" data-mid="' + a.id + '" style="text-align:left"><span style="flex:1;min-width:0"><span style="display:block">' +
+        esc(a.name) + '</span><span style="display:block;font-size:12px;color:var(--kimi-color-text-tertiary)">' + esc(st) + "</span></span>" +
+        ico("i-edit") + "</button>";
+    }).join("");
+    openSheet("管理负债", '<div class="amenu">' + rows + "</div>", null, null, true);
+    sheet.querySelectorAll("[data-mid]").forEach(function (b) {
+      b.onclick = function () { var id = b.getAttribute("data-mid"); closeSheet(); formDebtMenu(id); };
+    });
+  }
+
+  /* --- debt menu --- */
+  function formDebtMenu(accId) {
+    var acc = accById(accId);
+    if (!acc) return;
+    var isLoan = acc.type === "loan";
+    var settledNow = acc.settled === monthKey(new Date());
+    var headSub = isLoan
+      ? (acc.dueDay ? "每月 " + acc.dueDay + " 日扣款 · 每期 " + fmt(acc.amt || 0) : "未设还款日")
+      : (acc.dueDay ? "DDL 每月 " + acc.dueDay + " 日" + (acc.limit ? " · 额度 " + fmt(acc.limit) : "") : "未设还款日");
+    var rows = "";
+    if (!isLoan) rows += '<button type="button" data-m="exp">' + ico("i-minus") + "记支出（刷卡）</button>";
+    rows += '<button type="button" data-m="repay">' + ico("i-credit") + (isLoan ? "还本期" : "还款") + "</button>";
+    if (isLoan) rows += '<button type="button" data-m="settle">' + ico("i-save") + (settledNow ? "撤销本期已还标记" : "标记本期已还") + "</button>";
+    rows += '<button type="button" data-m="bal">' + ico("i-edit") + (isLoan ? "调整每期应还 / 还款日" : "调整未还金额 / 额度 / 还款日") + "</button>";
+    var hasTx = state.tx.some(function (t) { return t.accountId === accId || t.fromId === accId || t.toId === accId; });
+    if (!hasTx) rows += '<button type="button" data-m="del" class="danger">' + ico("i-trash") + "删除此负债</button>";
+    openSheet(acc.name,
+      '<div class="amenu"><div class="balshow"><span class="l">' + esc(headSub) + '</span><span class="v num">' + fmt(Math.max(0, acc.balance)) + "</span></div>" + rows + "</div>",
+      null, null, true);
+    sheet.querySelectorAll("[data-m]").forEach(function (b) {
+      b.onclick = function () {
+        var m = b.getAttribute("data-m");
+        closeSheet();
+        if (m === "exp") formExpense(accId);
+        else if (m === "repay") formTransfer(true, accId);
+        else if (m === "settle") {
+          if (settledNow) { acc.settled = null; }
+          else { acc.settled = monthKey(new Date()); acc.balance = 0; }
+          persist(); render();
+        }
+        else if (m === "bal") formBalance(accId);
+        else if (m === "del") {
+          state.accounts = state.accounts.filter(function (a) { return a.id !== accId; });
+          persist(); render();
+        }
+      };
+    });
+  }
+
+  /* --- edit an existing transaction (balances auto reverted & re-applied) --- */
+  function formEditTx(t) {
+    if (!t) return;
+    var delFoot = '<button class="kbtn danger" id="m-extra">删除这笔</button>';
+    var doClear = function () {
+      revertTx(t);
+      state.tx = state.tx.filter(function (x) { return x.id !== t.id; });
+      persist(); render(); return true;
+    };
+    if (t.type === "expense") {
+      var pickedCat = t.category;
+      var accOpts = state.accounts.filter(function (a) { return a.type !== "loan"; }).map(function (a) {
+        return '<option value="' + a.id + '"' + (a.id === t.accountId ? " selected" : "") + ">" + accOptLabel(a) + "</option>";
+      }).join("");
+      openSheet("修改支出",
+        fld("金额", '<input id="f-amt" type="number" inputmode="decimal" min="0.01" step="0.01" value="' + t.amount + '">') +
+        fld("分类", '<div class="chips" id="f-cats">' + catChipsHtml(pickedCat) + "</div>") +
+        fld("支付账户", '<select id="f-acc">' + accOpts + "</select>") +
+        fld("备注", '<input id="f-note" type="text" value="' + esc(t.note || "") + '" placeholder="买了什么">'),
+        function (isClear) {
+          if (isClear) return doClear();
+          var amt = parseAmt(val("f-amt"));
+          var acc = accById(val("f-acc"));
+          if (!amt || !acc || !pickedCat) return false;
+          revertTx(t);
+          t.amount = amt; t.category = pickedCat; t.accountId = acc.id; t.note = val("f-note") || null;
+          applyTx(t);
+          persist(); render(); return true;
+        }, "保存", false, delFoot);
+      bindCatChips($("f-cats"), function () { return pickedCat; }, function (id) { pickedCat = id; });
+      return;
+    }
+    if (t.type === "income") {
+      var accOpts2 = state.accounts.filter(function (a) { return !isDueAcc(a); }).map(function (a) {
+        return '<option value="' + a.id + '"' + (a.id === t.accountId ? " selected" : "") + ">" + accOptLabel(a) + "</option>";
+      }).join("");
+      openSheet("修改收入",
+        fld("金额", '<input id="f-amt" type="number" inputmode="decimal" min="0.01" step="0.01" value="' + t.amount + '">') +
+        fld("存入账户", '<select id="f-acc">' + accOpts2 + "</select>") +
+        fld("备注", '<input id="f-note" type="text" value="' + esc(t.note || "") + '" placeholder="工资 / 外快…">'),
+        function (isClear) {
+          if (isClear) return doClear();
+          var amt = parseAmt(val("f-amt"));
+          var acc = accById(val("f-acc"));
+          if (!amt || !acc) return false;
+          revertTx(t);
+          t.amount = amt; t.accountId = acc.id; t.note = val("f-note") || null;
+          applyTx(t);
+          persist(); render(); return true;
+        }, "保存", false, delFoot);
+      return;
+    }
+    /* transfer / repay */
+    var assetAccs = state.accounts.filter(function (a) { return !isDueAcc(a); });
+    var toAccs = t.type === "repay" ? state.accounts.filter(isDueAcc) : assetAccs;
+    openSheet(t.type === "repay" ? "修改还款" : "修改转账",
+      fld("金额", '<input id="f-amt" type="number" inputmode="decimal" min="0.01" step="0.01" value="' + t.amount + '">') +
+      fld("转出账户", '<select id="f-from">' + assetAccs.map(function (a) {
+        return '<option value="' + a.id + '"' + (a.id === t.fromId ? " selected" : "") + ">" + accOptLabel(a) + "</option>";
+      }).join("") + "</select>") +
+      fld(t.type === "repay" ? "还到" : "转入账户", '<select id="f-to">' + toAccs.map(function (a) {
+        return '<option value="' + a.id + '"' + (a.id === t.toId ? " selected" : "") + ">" + accOptLabel(a) + "</option>";
+      }).join("") + "</select>"),
+      function (isClear) {
+        if (isClear) return doClear();
+        var amt = parseAmt(val("f-amt"));
+        var from = accById(val("f-from")), to = accById(val("f-to"));
+        if (!amt) return "请填写正确的金额";
+        if (!from || !to) return "账户选择无效，请重新选择";
+        if (from.id === to.id) return "转出和转入不能是同一个账户";
+        revertTx(t);
+        if (!isDueAcc(from) && from.balance < amt) { applyTx(t); return "「" + from.name + "」余额不足（当前 " + fmt(from.balance) + "）"; }
+        if (t.type === "repay" && to.balance <= 0) { applyTx(t); return "「" + to.name + "」当前没有待还金额"; }
+        if (t.type === "repay" && amt > to.balance) { applyTx(t); return "还款金额不能超过待还 " + fmt(to.balance); }
+        t.amount = amt; t.fromId = from.id; t.toId = to.id;
+        applyTx(t);
+        persist(); render(); return true;
+      }, "保存", false, delFoot);
+  }
+
+  /* --- expense (account locked) --- */
+  function formExpense(accId, prefillAmt) {
+    var acc = accById(accId);
+    if (!acc) return;
+    var pickedCat = state.cats.length ? state.cats[0].id : null;
+    openSheet("记支出 · " + acc.name,
+      fld("金额", '<input id="f-amt" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="0.00" value="' + (prefillAmt || "") + '">') +
+      fld("分类", '<div class="chips" id="f-cats">' + catChipsHtml(pickedCat) + "</div>" +
+        (state.cats.length ? "" : '<span class="hint">还没有类别，点「新建类别」创建一个</span>')) +
+      fld("支付账户", '<input value="' + esc(acc.name) + '" disabled>') +
+      fld("备注（可选）", '<input id="f-note" type="text" placeholder="买了什么">'),
+      function () {
+        var amt = parseAmt(val("f-amt"));
+        if (!amt || !pickedCat) return false;
+        state.tx.push({ id: uid("t"), ts: nowISO(), type: "expense", amount: amt, accountId: acc.id, category: pickedCat, note: val("f-note") || null });
+        if (isDueAcc(acc)) acc.balance = Math.round((acc.balance + amt) * 100) / 100;
+        else acc.balance = Math.round((acc.balance - amt) * 100) / 100;
+        syncBillDue(acc);
+        persist(); render(); return true;
+      }, "记上");
+    bindCatChips($("f-cats"), function () { return pickedCat; }, function (id) { pickedCat = id; });
+  }
+
+  /* --- expense from a budget tile: category locked, pick the paying account --- */
+  function formExpenseCat(catId) {
+    var cat = catById(catId);
+    if (!cat) return;
+    var accs = state.accounts.filter(function (a) { return a.type !== "loan"; });
+    if (!accs.length) return;
+    /* default to the account used by the most recent expense, else the first */
+    var def = accs[0].id;
+    for (var i = state.tx.length - 1; i >= 0; i--) {
+      var t0 = state.tx[i];
+      if (t0.type === "expense" && accs.some(function (a) { return a.id === t0.accountId; })) { def = t0.accountId; break; }
+    }
+    openSheet("记支出 · " + cat.name,
+      fld("金额", '<input id="f-amt" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="0.00">') +
+      fld("预算项目", '<button type="button" class="catlink" id="f-catset"><span>' + esc(cat.name) + '</span><span class="go">预算设置 ›</span></button>') +
+      fld("支付账户", '<select id="f-acc">' + accs.map(function (a) {
+        return '<option value="' + a.id + '"' + (a.id === def ? " selected" : "") + ">" + accOptLabel(a) + "</option>";
+      }).join("") + "</select>") +
+      fld("备注（可选）", '<input id="f-note" type="text" placeholder="买了什么">'),
+      function (isClear) {
+        if (isClear) return true;
+        var amt = parseAmt(val("f-amt"));
+        var acc = accById(val("f-acc"));
+        if (!amt) return "请填写正确的金额";
+        if (!acc) return "请选择支付账户";
+        state.tx.push({ id: uid("t"), ts: nowISO(), type: "expense", amount: amt, accountId: acc.id, category: cat.id, note: val("f-note") || null });
+        if (isDueAcc(acc)) acc.balance = Math.round((acc.balance + amt) * 100) / 100;
+        else acc.balance = Math.round((acc.balance - amt) * 100) / 100;
+        syncBillDue(acc);
+        persist(); render(); return true;
+      }, "记上");
+    var cs = $("f-catset");
+    if (cs) cs.onclick = function () { closeSheet(); formCatBudget(catId); };
+  }
+
+  /* --- income (account locked) --- */
+  function formIncome(accId) {
+    var acc = accById(accId);
+    if (!acc) return;
+    openSheet("记收入 · " + acc.name,
+      fld("金额", '<input id="f-amt" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="0.00">') +
+      fld("存入账户", '<input value="' + esc(acc.name) + '" disabled>') +
+      fld("备注（可选）", '<input id="f-note" type="text" placeholder="工资 / 外快…">'),
+      function () {
+        var amt = parseAmt(val("f-amt"));
+        if (!amt) return false;
+        state.tx.push({ id: uid("t"), ts: nowISO(), type: "income", amount: amt, accountId: acc.id, note: val("f-note") || null });
+        if (!isDueAcc(acc)) acc.balance = Math.round((acc.balance + amt) * 100) / 100;
+        persist(); render(); return true;
+      }, "记上");
+  }
+
+  /* --- transfer / repay --- */
+  function formTransfer(isRepay, toId) {
+    var assetAccs = state.accounts.filter(function (a) { return !isDueAcc(a); });
+    var creditAccs = state.accounts.filter(isDueAcc);
+    var body =
+      fld("金额", '<input id="f-amt" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="0.00">') +
+      fld(isRepay ? "从哪个账户扣款" : "转出账户", '<select id="f-from">' + assetAccs.map(function (a) {
+        return '<option value="' + a.id + '">' + accOptLabel(a) + "</option>";
+      }).join("") + "</select>");
+    if (isRepay) {
+      body += fld("还到", '<select id="f-to">' + creditAccs.map(function (a) {
+        return '<option value="' + a.id + '"' + (a.id === toId ? " selected" : "") + ">" + accOptLabel(a) + "</option>";
+      }).join("") + "</select>");
+    } else {
+      body += fld("转入账户", '<select id="f-to">' + assetAccs.map(function (a) {
+        return '<option value="' + a.id + '">' + accOptLabel(a) + "</option>";
+      }).join("") + "</select>");
+    }
+    openSheet(isRepay ? "还款" : "账户间转账", body, function () {
+      var amt = parseAmt(val("f-amt"));
+      var from = accById(val("f-from")), to = accById(val("f-to"));
+      if (!amt) return "请填写正确的金额";
+      if (!from || !to) return "账户选择无效，请重新选择";
+      if (from.id === to.id) return "转出和转入不能是同一个账户";
+      if (!isDueAcc(from) && from.balance < amt) return "「" + from.name + "」余额不足（当前 " + fmt(from.balance) + "），换个账户或先调整余额";
+      if (isRepay && to.balance <= 0) return "「" + to.name + "」当前没有待还金额";
+      if (isRepay && amt > to.balance) return "还款金额不能超过待还 " + fmt(to.balance);
+      state.tx.push({ id: uid("t"), ts: nowISO(), type: isRepay ? "repay" : "transfer", amount: amt, fromId: from.id, toId: to.id });
+      if (!isDueAcc(from)) from.balance = Math.round((from.balance - amt) * 100) / 100;
+      if (isRepay) {
+        to.balance = Math.round((to.balance - amt) * 100) / 100;
+        if (to.type === "loan" && to.balance <= 0) { to.balance = 0; to.settled = monthKey(new Date()); }
+        syncBillDue(to);
+      }
+      else if (!isDueAcc(to)) to.balance = Math.round((to.balance + amt) * 100) / 100;
+      persist(); render(); return true;
+    }, "确认");
+  }
+
+  /* --- adjust debt / balance --- */
+  function formBalance(accId) {
+    var acc = accById(accId);
+    if (!acc) return;
+    var isDue = isDueAcc(acc);
+    var isLoan = acc.type === "loan";
+    var body, onOk;
+    if (isLoan) {
+      body =
+        fld("每期应还金额", '<input id="f-amt" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" value="' + (acc.amt || "") + '">',
+          "到还款日会自动带出此金额作为本期应还") +
+        fld("每月还款日", '<input id="f-due" type="number" min="1" max="28" placeholder="如 15" value="' + (acc.dueDay || "") + '">');
+      onOk = function () {
+        var v = parseFloat(val("f-amt"));
+        if (!isFinite(v) || v <= 0) return false;
+        acc.amt = Math.round(v * 100) / 100;
+        var dv = parseInt(val("f-due"), 10);
+        acc.dueDay = dv >= 1 && dv <= 28 ? dv : (dv ? acc.dueDay : null);
+        persist(); render(); return true;
+      };
+    } else {
+      body =
+        fld("当前" + (isDue ? "未还金额" : "余额"), '<input id="f-bal" type="number" inputmode="decimal" step="0.01" placeholder="0.00" value="' + acc.balance + '">',
+          (isDue ? "对账用：和账单不一致时手动改" : "上次记录：" + fmt(acc.last != null ? acc.last : acc.balance))) +
+        (isDue ? fld("信用额度", '<input id="f-limit" type="number" inputmode="decimal" min="0" step="100" placeholder="0" value="' + (acc.limit || "") + '">') : "") +
+        (isDue ? fld("每月还款日（DDL）", '<input id="f-due" type="number" min="1" max="28" placeholder="如 2" value="' + (acc.dueDay || "") + '">') : "");
+      onOk = function () {
+        var v = parseFloat(val("f-bal"));
+        if (!isFinite(v) || v < 0) return false;
+        acc.last = acc.balance;
+        acc.balance = Math.round(v * 100) / 100;
+        if (isDue) {
+          var lv = parseFloat(val("f-limit"));
+          if (isFinite(lv) && lv > 0) acc.limit = Math.round(lv * 100) / 100;
+          var dv = parseInt(val("f-due"), 10);
+          acc.dueDay = dv >= 1 && dv <= 28 ? dv : (dv ? acc.dueDay : null);
+        }
+        syncBillDue(acc);
+        persist(); render(); return true;
+      };
+    }
+    openSheet((isDue ? "调整负债 · " : "记余额 · ") + acc.name, body, onOk, "保存");
+  }
+
+  /* --- add debt (from the repayment-bar section) --- */
+  function formAddDebt() {
+    openSheet("添加负债",
+      fld("名称", '<input id="f-name" type="text" placeholder="如：花呗、京东白条、车贷……">') +
+      fld("资金类型", '<select id="f-type">' +
+        '<option value="credit">循环信用（信用卡：持续消费累积，随时还款）</option>' +
+        '<option value="loan">定期扣款（每期固定金额，还款日一笔扣）</option></select>') +
+      '<div id="fw-loan" style="display:none">' +
+        fld("每期应还金额", '<input id="f-amt" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00">') +
+      "</div>" +
+      '<div id="fw-credit">' +
+        fld("当前未还金额", '<input id="f-bal" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00">') +
+        fld("信用额度", '<input id="f-limit" type="number" inputmode="decimal" min="0" step="100" placeholder="如 7500">') +
+      "</div>" +
+      fld("每月还款日", '<input id="f-due" type="number" min="1" max="28" placeholder="定期扣款填扣款日，信用卡填 DDL">'),
+      function () {
+        var name = val("f-name");
+        if (!name) return false;
+        var type = val("f-type");
+        var dv = parseInt(val("f-due"), 10);
+        var acc = { id: uid("a"), name: name, type: type, balance: 0, last: null };
+        if (dv >= 1 && dv <= 28) acc.dueDay = dv;
+        if (type === "loan") {
+          var amt = parseFloat(val("f-amt"));
+          if (!isFinite(amt) || amt <= 0) return false;
+          acc.amt = Math.round(amt * 100) / 100;
+          acc.balance = acc.amt;
+        } else {
+          var v = parseFloat(val("f-bal"));
+          if (!isFinite(v) || v < 0) return false;
+          acc.balance = Math.round(v * 100) / 100;
+          var lv = parseFloat(val("f-limit"));
+          if (isFinite(lv) && lv > 0) acc.limit = Math.round(lv * 100) / 100;
+        }
+        state.accounts.push(acc);
+        persist(); render(); return true;
+      }, "添加");
+    var ts = $("f-type");
+    if (ts) ts.onchange = function () {
+      var isL = this.value === "loan";
+      $("fw-loan").style.display = isL ? "" : "none";
+      $("fw-credit").style.display = isL ? "none" : "";
+    };
+  }
+
+  /* --- add account --- */
+  function formAddAcc() {
+    openSheet("添加账户",
+      fld("账户名称", '<input id="f-name" type="text" placeholder="如：招行储蓄卡">') +
+      fld("类型", '<select id="f-type">' +
+        '<option value="debit">储蓄卡</option><option value="cash">现金</option>' +
+        '<option value="credit">信用卡</option><option value="loan">信用贷 / 借款</option></select>') +
+      fld("当前金额", '<input id="f-bal" type="number" inputmode="decimal" step="0.01" placeholder="0.00">',
+        "信用卡 / 信用贷填当前待还金额，会显示为还款条") +
+      fld("每月还款日（可选）", '<input id="f-due" type="number" min="1" max="28" placeholder="仅信用卡 / 信用贷">'),
+      function () {
+        var name = val("f-name");
+        var v = parseFloat(val("f-bal"));
+        if (!name || !isFinite(v) || v < 0) return false;
+        var type = val("f-type");
+        var acc = { id: uid("a"), name: name, type: type, balance: Math.round(v * 100) / 100, last: null };
+        var dv = parseInt(val("f-due"), 10);
+        if (isDueAcc(acc) && dv >= 1 && dv <= 28) acc.dueDay = dv;
+        state.accounts.push(acc);
+        persist(); render(); return true;
+      }, "添加");
+  }
+
+  /* ---------------- events ---------------- */
+  function bind() {
+    $("b-trf").onclick = function () { formTransfer(false); };
+    $("b-debtmgmt").onclick = function () { formDebtMgmt(); };
+    $("v-blist").addEventListener("click", function (e) {
+      var add = e.target.closest("#b-addcat");
+      if (add) { formAddCat(); return; }
+      var row = e.target.closest("[data-bcat]");
+      if (!row) return;
+      var catId = row.getAttribute("data-bcat");
+      if (row.classList.contains("needb")) formCatBudget(catId);
+      else formExpenseCat(catId);
+    });
+    $("v-blist").addEventListener("keydown", function (e) {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      var row = e.target.closest && e.target.closest("[data-bcat]");
+      if (!row) return;
+      e.preventDefault();
+      if (row.classList.contains("needb")) formCatBudget(row.getAttribute("data-bcat"));
+      else formExpenseCat(row.getAttribute("data-bcat"));
+    });
+    $("v-debts").addEventListener("click", function (e) {
+      var addD = e.target.closest("#b-adddebt");
+      if (addD) { formAddDebt(); return; }
+      var row = e.target.closest("[data-debt]");
+      if (row) formDebtMenu(row.getAttribute("data-debt"));
+    });
+    $("v-debts").addEventListener("keydown", function (e) {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      var row = e.target.closest && e.target.closest("[data-debt]");
+      if (row) { e.preventDefault(); formDebtMenu(row.getAttribute("data-debt")); }
+    });
+    $("v-accs").addEventListener("click", function (e) {
+      var add = e.target.closest("#b-addacc");
+      if (add) { formAddAcc(); return; }
+      var btn = e.target.closest("[data-act]");
+      if (btn) {
+        var id = btn.getAttribute("data-id");
+        var act = btn.getAttribute("data-act");
+        if (act === "bal") formBalance(id);
+        else if (act === "del") {
+          if (state.tx.some(function (t) { return t.accountId === id || t.fromId === id || t.toId === id; })) return;
+          state.accounts = state.accounts.filter(function (a) { return a.id !== id; });
+          persist(); render();
+        }
+        return;
+      }
+      var card = e.target.closest("[data-aid]");
+      if (card) formAccMenu(card.getAttribute("data-aid"));
+    });
+    $("v-accs").addEventListener("keydown", function (e) {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      var card = e.target.closest && e.target.closest("[data-aid]");
+      if (card) { e.preventDefault(); formAccMenu(card.getAttribute("data-aid")); }
+    });
+    $("v-tx").addEventListener("click", function (e) {
+      var btn = e.target.closest("[data-tdel]");
+      if (btn) {
+        var id = btn.getAttribute("data-tdel");
+        var t0 = null;
+        for (var i = 0; i < state.tx.length; i++) if (state.tx[i].id === id) t0 = state.tx[i];
+        if (!t0) return;
+        revertTx(t0);
+        state.tx = state.tx.filter(function (x) { return x.id !== id; });
+        persist(); render();
+        return;
+      }
+      var row = e.target.closest("[data-tid]");
+      if (!row) return;
+      var tid = row.getAttribute("data-tid"), tx = null;
+      for (var j = 0; j < state.tx.length; j++) if (state.tx[j].id === tid) tx = state.tx[j];
+      formEditTx(tx);
+    });
+    mask.addEventListener("click", function (e) { if (e.target === mask) closeSheet(); });
+  }
+
+  /* ---------------- boot ---------------- */
+  function boot() {
+    mask = $("v-mask"); sheet = $("v-sheet");
+    bind();
+    load(function () { render(); });
+  }
+  try {
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { try { boot(); } catch (e) {} });
+    else boot();
+  } catch (e) {}
+})();
+</script>
+</template>
+<template id="tpl-sch">
+<style>
+  html,body{margin:0;padding:0;font-family:var(--kimi-font-sans);}
+  button,input,select,textarea{font:inherit;}
+  .wrap{padding:var(--kimi-space-4);display:flex;flex-direction:column;gap:var(--kimi-space-4);}
+  .legend{display:flex;flex-wrap:wrap;gap:var(--kimi-space-3);font-size:12px;color:var(--kimi-color-text-secondary);}
+  .legend span{display:inline-flex;align-items:center;gap:var(--kimi-space-1);}
+  .dot{width:8px;height:8px;border-radius:var(--kimi-radius-full);display:inline-block;}
+  .d-work{background:var(--kimi-chart-1);}.d-side{background:var(--kimi-chart-4);}
+  .d-fit{background:var(--kimi-chart-3);}.d-life{background:var(--kimi-color-text-quaternary);}
+  .d-mixed{background:var(--kimi-chart-2);}
+  .tl-row{display:grid;grid-template-columns:92px 1fr;gap:var(--kimi-space-3);padding:var(--kimi-space-2) 0;border-bottom:1px solid var(--kimi-color-border);align-items:start;}
+  .tl-row:last-child{border-bottom:none;}
+  .tl-time{font-size:12px;color:var(--kimi-color-text-tertiary);font-variant-numeric:tabular-nums;padding-top:2px;}
+  .tl-block{border-radius:var(--kimi-radius-chip);padding:var(--kimi-space-2) var(--kimi-space-3);}
+  .tl-block b{font-weight:500;font-size:14px;display:block;}
+  .tl-block small{font-size:12px;color:var(--kimi-color-text-secondary);display:block;margin-top:2px;}
+  .b-work{background:color-mix(in srgb,var(--kimi-chart-1) 12%,transparent);}
+  .b-side{background:color-mix(in srgb,var(--kimi-chart-4) 12%,transparent);}
+  .b-fit{background:color-mix(in srgb,var(--kimi-chart-3) 12%,transparent);}
+  .b-life{background:color-mix(in srgb,var(--kimi-color-text-quaternary) 12%,transparent);}
+  .b-mixed{background:color-mix(in srgb,var(--kimi-chart-2) 10%,transparent);}
+  .wk-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:var(--kimi-space-2);}
+  .wk-day{border:1px solid var(--kimi-color-border);border-radius:var(--kimi-radius-input);padding:var(--kimi-space-3);}
+  .wk-day h4{margin:0 0 var(--kimi-space-2);font-size:14px;font-weight:500;}
+  .wk-day .tt{font-size:13px;font-weight:500;}
+  .wk-day ul{margin:var(--kimi-space-1) 0 0;padding:0;list-style:none;font-size:12px;color:var(--kimi-color-text-secondary);display:flex;flex-direction:column;gap:var(--kimi-space-1);}
+  .m-bar{display:flex;height:40px;border-radius:var(--kimi-radius-chip);overflow:hidden;font-size:12px;}
+  .m-seg{display:flex;align-items:center;justify-content:center;color:#fff;white-space:nowrap;overflow:hidden;}
+  .m-note{font-size:12px;color:var(--kimi-color-text-secondary);}
+  .view{display:none;}.view.on{display:flex;flex-direction:column;gap:var(--kimi-space-3);}
+  .subview{display:none;}.subview.on{display:block;}
+  .prog{height:14px;border-radius:var(--kimi-radius-full);background:color-mix(in srgb,var(--kimi-chart-3) 15%,transparent);overflow:hidden;}
+  .prog-fill{height:100%;width:0;background:var(--kimi-chart-3);border-radius:inherit;transition:width .6s ease;}
+  .prog-labels{display:flex;justify-content:space-between;gap:var(--kimi-space-2);font-size:12px;color:var(--kimi-color-text-tertiary);font-variant-numeric:tabular-nums;}
+  .phase-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:var(--kimi-space-2);}
+  .ph-card{border:1px solid var(--kimi-color-border);border-radius:var(--kimi-radius-input);padding:var(--kimi-space-3);}
+  .ph-card.now{border-color:var(--kimi-chart-3);background:color-mix(in srgb,var(--kimi-chart-3) 8%,transparent);}
+  .ph-card h4{margin:0;font-size:14px;font-weight:500;}
+  .ph-card .now-tag{font-size:11px;color:var(--kimi-chart-3);font-weight:600;margin-left:var(--kimi-space-1);}
+  .ph-card .tt{font-size:12px;color:var(--kimi-color-text-tertiary);margin-top:2px;}
+  .ph-card .ph-t{font-size:15px;font-weight:600;margin-top:var(--kimi-space-1);font-variant-numeric:tabular-nums;}
+  .ph-card p{margin:var(--kimi-space-1) 0 0;font-size:12px;color:var(--kimi-color-text-secondary);}
+  .rule-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:var(--kimi-space-2);font-size:12px;color:var(--kimi-color-text-secondary);}
+  .rule-list b{color:var(--kimi-color-text-primary);font-weight:500;}
+</style>
+
+
+<div class="wrap">
+  <div class="kimi-page-title">个人日程与工作安排</div>
+  <div class="kimi-text-secondary" style="font-size:14px;">上午固定深耕调油与市场 · 12:00 收市后按思绪状态选定日型 · 深度块 2–4 小时</div>
+
+  <div class="kimi-segmented" aria-label="视图">
+    <button class="kimi-chip is-selected" data-v="type" aria-pressed="true">日型日程表</button>
+    <button class="kimi-chip" data-v="week" aria-pressed="false">每周</button>
+    <button class="kimi-chip" data-v="month" aria-pressed="false">每月</button>
+    <button class="kimi-chip" data-v="fat" aria-pressed="false">减重</button>
+  </div>
+
+  <div class="legend">
+    <span><i class="dot d-work"></i>主业 · 油站运营</span>
+    <span><i class="dot d-side"></i>副业 · 装修 / 手捻</span>
+    <span><i class="dot d-fit"></i>运动</span>
+    <span><i class="dot d-life"></i>生活 / 休息</span>
+    <span><i class="dot d-mixed"></i>密集期现场</span>
+  </div>
+
+  <div class="view on" id="v-type">
+    <div class="kimi-segmented" aria-label="日型">
+      <button class="kimi-chip is-selected" data-t="a" aria-pressed="true">A · 主业深度日</button>
+      <button class="kimi-chip" data-t="b" aria-pressed="false">B · 创作深度日</button>
+      <button class="kimi-chip" data-t="c" aria-pressed="false">C · 密集期日</button>
+      <button class="kimi-chip" data-t="d" aria-pressed="false">D · 恢复日</button>
+    </div>
+
+    <div class="subview on" id="t-a">
+      <div>
+        <div class="tl-row"><div class="tl-time">08:00–09:00</div><div class="tl-block b-life"><b>起床 · 洗漱 · 晨间准备</b><small>睡眠 00:00–08:00 恰好 8 小时；8:30 员工到岗，开始留意工作群动态</small></div></div>
+        <div class="tl-row"><div class="tl-time">09:00–12:00</div><div class="tl-block b-work"><b>调油与市场窗口（深度块 ① · 约 3 h）</b><small>9:00 收五站前日库存表 → 盯山东、辽宁等地炼厂批发价、石油大盘与行业新闻 → 完成购进决策与车辆调度</small></div></div>
+        <div class="tl-row"><div class="tl-time">10:00</div><div class="tl-block b-life"><b>早午餐</b><small>进食窗口 10:00–18:00；盯盘时用餐，不打断工作</small></div></div>
+        <div class="tl-row"><div class="tl-time">10:00–11:00</div><div class="tl-block b-work"><b>向上级领导汇报当日调油工作（约 30 分钟）</b><small>当日调油计划完成后进行；固定任务，不论日型均需执行</small></div></div>
+        <div class="tl-row"><div class="tl-time">12:10–12:55</div><div class="tl-block b-fit"><b>椭圆机 40–45 分钟</b><small>收市后立即进行，阻力上调一档（能说话但不能唱歌的强度）；餐后运动控血糖、防犯困</small></div></div>
+        <div class="tl-row"><div class="tl-time">12:55–14:00</div><div class="tl-block b-life"><b>安静休息</b><small>员工午休窗口，不安排对外协调；不午睡，保护夜间睡眠</small></div></div>
+        <div class="tl-row"><div class="tl-time">14:00–17:00</div><div class="tl-block b-work"><b>管理深度块（深度块 ② · 约 3 h）</b><small>活动策划 / 人事调配 / 资金安排，一次只攻一个主题；17:00 前发出所有需员工执行的指令</small></div></div>
+        <div class="tl-row"><div class="tl-time">17:00–18:00</div><div class="tl-block b-work"><b>收尾 · 与助理确认次日日程</b><small>助理 18:00 下班，此前完成当日收尾与次日安排</small></div></div>
+        <div class="tl-row"><div class="tl-time">18:00–18:40</div><div class="tl-block b-life"><b>晚餐</b><small>进食窗口关闭</small></div></div>
+        <div class="tl-row"><div class="tl-time">18:40–19:10</div><div class="tl-block b-fit"><b>晚饭后快走 25–30 分钟</b><small>户外或室内原地均可，微喘强度；压餐后血糖峰</small></div></div>
+        <div class="tl-row"><div class="tl-time">19:10–21:30</div><div class="tl-block b-life"><b>自由时间</b><small>娱乐、陪伴侣、阅读；不安排工作</small></div></div>
+        <div class="tl-row"><div class="tl-time">21:30–21:50</div><div class="tl-block b-life"><b>日复盘</b><small>记录今日完成项与心得，不预定明日日型</small></div></div>
+        <div class="tl-row"><div class="tl-time">21:50–23:10</div><div class="tl-block b-life"><b>放松</b></div></div>
+        <div class="tl-row"><div class="tl-time">23:10–23:30</div><div class="tl-block b-fit"><b>核心锻炼 20 分钟</b><small>周二 / 周四 / 周六扩展为力量训练 25–30 分钟：+ 深蹲 15×3、臀桥 15×3、跪姿俯卧撑 10×3、平板支撑 45 秒×3（保肌肉，不可省略）</small></div></div>
+        <div class="tl-row"><div class="tl-time">23:30–00:00</div><div class="tl-block b-life"><b>洗澡 + 护肤</b></div></div>
+        <div class="tl-row"><div class="tl-time">00:00</div><div class="tl-block b-life"><b>固定就寝</b></div></div>
+      </div>
+    </div>
+
+    <div class="subview" id="t-b">
+      <div>
+        <div class="tl-row"><div class="tl-time">08:00–09:00</div><div class="tl-block b-life"><b>起床 · 洗漱 · 晨间准备</b><small>8:30 员工到岗，留意工作群动态</small></div></div>
+        <div class="tl-row"><div class="tl-time">09:00–12:00</div><div class="tl-block b-work"><b>调油与市场窗口（每日固定块）</b><small>收库存表、盯价、完成必要的购进与调度；收市后主业正式"关门"，不再查看工作消息</small></div></div>
+        <div class="tl-row"><div class="tl-time">10:00</div><div class="tl-block b-life"><b>早午餐</b><small>盯盘时用餐</small></div></div>
+        <div class="tl-row"><div class="tl-time">10:00–11:00</div><div class="tl-block b-work"><b>向上级领导汇报当日调油工作（约 30 分钟）</b><small>当日调油计划完成后进行；固定任务，不论日型均需执行</small></div></div>
+        <div class="tl-row"><div class="tl-time">12:10–12:55</div><div class="tl-block b-fit"><b>椭圆机 40–45 分钟</b><small>阻力上调一档（能说话但不能唱歌的强度）</small></div></div>
+        <div class="tl-row"><div class="tl-time">12:55–14:00</div><div class="tl-block b-side"><b>创作预热</b><small>灵感素材浏览、构思、工具与素材就位，让大脑完成从油站到创作的切换</small></div></div>
+        <div class="tl-row"><div class="tl-time">14:00–18:00</div><div class="tl-block b-side"><b>创作深度块（约 4 h）</b><small>FF14 装修设计 或 手捻制作，一天只做一种，深耕到底</small></div></div>
+        <div class="tl-row"><div class="tl-time">18:00–18:40</div><div class="tl-block b-life"><b>晚餐</b><small>进食窗口关闭</small></div></div>
+        <div class="tl-row"><div class="tl-time">18:40–19:10</div><div class="tl-block b-fit"><b>晚饭后快走 25–30 分钟</b><small>创作收尾后的切换仪式，顺便压餐后血糖</small></div></div>
+        <div class="tl-row"><div class="tl-time">19:10–21:30</div><div class="tl-block b-side"><b>可选延伸块</b><small>视频剪辑、B 站发布与互动、客户沟通；状态不想继续则纯休息，均不算破例</small></div></div>
+        <div class="tl-row"><div class="tl-time">21:30–21:50</div><div class="tl-block b-life"><b>日复盘</b><small>记录创作进度与作品归档</small></div></div>
+        <div class="tl-row"><div class="tl-time">21:50–23:10</div><div class="tl-block b-life"><b>放松</b></div></div>
+        <div class="tl-row"><div class="tl-time">23:10–23:30</div><div class="tl-block b-fit"><b>核心锻炼 20 分钟</b><small>周二 / 周四 / 周六扩展为力量训练 25–30 分钟：+ 深蹲 15×3、臀桥 15×3、跪姿俯卧撑 10×3、平板支撑 45 秒×3（保肌肉，不可省略）</small></div></div>
+        <div class="tl-row"><div class="tl-time">23:30–00:00</div><div class="tl-block b-life"><b>洗澡 + 护肤</b></div></div>
+        <div class="tl-row"><div class="tl-time">00:00</div><div class="tl-block b-life"><b>固定就寝</b></div></div>
+      </div>
+    </div>
+
+    <div class="subview" id="t-c">
+      <div>
+        <div class="tl-row"><div class="tl-time">08:00–09:00</div><div class="tl-block b-life"><b>起床 · 洗漱 · 与助理对当日行程</b><small>人在扎兰屯；出门前确认当天走访站点与现场事项</small></div></div>
+        <div class="tl-row"><div class="tl-time">09:00–12:00</div><div class="tl-block b-mixed"><b>站内现场块（约 3 h）</b><small>走访油站、人员调配、现场问题处理；库存表照常 9:00 收取，途中查阅</small></div></div>
+        <div class="tl-row"><div class="tl-time">10:00</div><div class="tl-block b-life"><b>早午餐</b><small>可在站内或途中解决</small></div></div>
+        <div class="tl-row"><div class="tl-time">10:00–11:00</div><div class="tl-block b-work"><b>向上级领导汇报当日调油工作（约 30 分钟）</b><small>当日调油计划完成后进行，可电话汇报；固定任务，不论日型均需执行</small></div></div>
+        <div class="tl-row"><div class="tl-time">12:10–12:55</div><div class="tl-block b-fit"><b>椭圆机 40–45 分钟</b><small>回家进行；运动锚点在密集期不变</small></div></div>
+        <div class="tl-row"><div class="tl-time">12:55–14:00</div><div class="tl-block b-life"><b>安静休息 · 整理上午现场记录</b></div></div>
+        <div class="tl-row"><div class="tl-time">14:00–17:00</div><div class="tl-block b-mixed"><b>账务集中块（约 3 h）</b><small>收各站账目、与财务对账查账、资金管理与安排</small></div></div>
+        <div class="tl-row"><div class="tl-time">17:00–18:00</div><div class="tl-block b-mixed"><b>与财务 / 助理收尾确认</b><small>当日问题清单闭环，明确明日现场重点</small></div></div>
+        <div class="tl-row"><div class="tl-time">18:00–18:40</div><div class="tl-block b-life"><b>晚餐</b></div></div>
+        <div class="tl-row"><div class="tl-time">18:40–19:10</div><div class="tl-block b-fit"><b>晚饭后快走 25–30 分钟</b><small>密集期也保留；应酬日只求完成，不追强度</small></div></div>
+        <div class="tl-row"><div class="tl-time">19:10–21:30</div><div class="tl-block b-life"><b>自由时间</b><small>副业整段暂停，仅保留客户消息回复</small></div></div>
+        <div class="tl-row"><div class="tl-time">21:30–21:50</div><div class="tl-block b-life"><b>日复盘</b><small>核对密集期总清单进度（28–10 日待办逐项销号）</small></div></div>
+        <div class="tl-row"><div class="tl-time">21:50–23:10</div><div class="tl-block b-life"><b>放松</b></div></div>
+        <div class="tl-row"><div class="tl-time">23:10–23:30</div><div class="tl-block b-fit"><b>核心锻炼 20 分钟</b><small>周二 / 周四 / 周六扩展为力量训练 25–30 分钟：+ 深蹲 15×3、臀桥 15×3、跪姿俯卧撑 10×3、平板支撑 45 秒×3（保肌肉，不可省略）</small></div></div>
+        <div class="tl-row"><div class="tl-time">23:30–00:00</div><div class="tl-block b-life"><b>洗澡 + 护肤</b></div></div>
+        <div class="tl-row"><div class="tl-time">00:00</div><div class="tl-block b-life"><b>固定就寝</b></div></div>
+      </div>
+    </div>
+
+    <div class="subview" id="t-d">
+      <div>
+        <div class="tl-row"><div class="tl-time">08:00–09:00</div><div class="tl-block b-life"><b>自然醒 · 慢速晨间</b><small>不设严格时点，但起床不晚于 9:00，保护睡眠节律</small></div></div>
+        <div class="tl-row"><div class="tl-time">09:00–09:30</div><div class="tl-block b-work"><b>库存表速览（底线动作）</b><small>确认无异常即可；紧急调度交由助理代办</small></div></div>
+        <div class="tl-row"><div class="tl-time">10:00–10:40</div><div class="tl-block b-life"><b>早午餐</b><small>从容用餐</small></div></div>
+        <div class="tl-row"><div class="tl-time">10:00–11:00</div><div class="tl-block b-work"><b>向上级领导汇报当日调油工作（约 30 分钟）</b><small>当日调油计划完成后进行；固定任务，不论日型均需执行，恢复日可在餐后、椭圆机前完成</small></div></div>
+        <div class="tl-row"><div class="tl-time">10:40–11:25</div><div class="tl-block b-fit"><b>椭圆机 40–45 分钟</b><small>恢复日强度可降，但块不取消；餐后直接运动</small></div></div>
+        <div class="tl-row"><div class="tl-time">11:25–18:00</div><div class="tl-block b-life"><b>全天无深度块</b><small>陪伴侣、外出、娱乐、发呆——什么都不推进也是本日的目标</small></div></div>
+        <div class="tl-row"><div class="tl-time">18:00–18:40</div><div class="tl-block b-life"><b>晚餐</b></div></div>
+        <div class="tl-row"><div class="tl-time">18:40–19:10</div><div class="tl-block b-fit"><b>晚饭后快走 25–30 分钟</b><small>恢复日保留，强度随意</small></div></div>
+        <div class="tl-row"><div class="tl-time">19:10–21:30</div><div class="tl-block b-life"><b>自由时间</b></div></div>
+        <div class="tl-row"><div class="tl-time">21:30–21:40</div><div class="tl-block b-life"><b>轻量复盘</b><small>记一句心情即可；郁期连续 D 日 + 仅保留上午库存速览，恢复后回归正常配比</small></div></div>
+        <div class="tl-row"><div class="tl-time">21:40–23:10</div><div class="tl-block b-life"><b>放松</b></div></div>
+        <div class="tl-row"><div class="tl-time">23:10–23:30</div><div class="tl-block b-fit"><b>核心锻炼 20 分钟</b><small>周二 / 周四 / 周六扩展为力量训练 25–30 分钟：+ 深蹲 15×3、臀桥 15×3、跪姿俯卧撑 10×3、平板支撑 45 秒×3（保肌肉，不可省略）</small></div></div>
+        <div class="tl-row"><div class="tl-time">23:30–00:00</div><div class="tl-block b-life"><b>洗澡 + 护肤</b></div></div>
+        <div class="tl-row"><div class="tl-time">00:00</div><div class="tl-block b-life"><b>固定就寝</b><small>睡前三件套（锻炼、洗澡、护肤）即使恢复日也照常，是情绪稳定锚点</small></div></div>
+      </div>
+    </div>
+
+    <div class="m-note">选择规则：12:00 收市后、踩椭圆机时顺势决定——思绪仍绕着油站转就选 A，已飘向装修或手工就选 B；下午只深耕一件事，不混合。</div>
+  </div>
+
+  <div class="view" id="v-week">
+    <div class="kimi-section-title" style="font-size:15px;">每周默认配比（3A + 3B + 1D，日型按当天状态灵活落位）</div>
+    <div class="wk-grid">
+      <div class="wk-day"><h4>周一</h4><div class="tt">倾向 A</div><ul><li>站长视频例会（四人）</li><li>本周调油与活动规划</li><li>空腹称重 · 核对阶段目标</li></ul></div>
+      <div class="wk-day"><h4>周二</h4><div class="tt">倾向 A</div><ul><li>活动策划 / 人事</li><li>力量训练日</li></ul></div>
+      <div class="wk-day"><h4>周三</h4><div class="tt">倾向 B</div><ul><li>FF14 装修设计</li></ul></div>
+      <div class="wk-day"><h4>周四</h4><div class="tt">倾向 B</div><ul><li>手捻制作</li><li>力量训练日</li></ul></div>
+      <div class="wk-day"><h4>周五</h4><div class="tt">倾向 A</div><ul><li>五站库存汇总</li><li>下周调油计划</li></ul></div>
+      <div class="wk-day"><h4>周六</h4><div class="tt">倾向 B</div><ul><li>B 站内容集中产出 / 发布</li><li>力量训练日</li></ul></div>
+      <div class="wk-day"><h4>周日</h4><div class="tt">D · 恢复日</div><ul><li>休息 · 陪伴侣</li><li>自由餐（早午餐，≤700 kcal）</li></ul></div>
+    </div>
+    <div class="m-note">模板只是参照系：每天中午按状态落位，一周大体保持 3 天主业、3 天创作、1 天恢复即可；周日恢复日固定不动。</div>
+  </div>
+
+  <div class="view" id="v-month">
+    <div class="kimi-section-title" style="font-size:15px;">月度周期</div>
+    <div class="m-bar">
+      <div class="m-seg" style="flex:10;background:var(--kimi-chart-2);">1–10 密集期</div>
+      <div class="m-seg" style="flex:9;background:var(--kimi-chart-4);">11–19 创作黄金期</div>
+      <div class="m-seg" style="flex:8;background:var(--kimi-chart-1);">20–27 主业准备期</div>
+      <div class="m-seg" style="flex:4;background:var(--kimi-chart-2);">28–31 密集期</div>
+    </div>
+    <div>
+      <div class="tl-row"><div class="tl-time">1–10 日</div><div class="tl-block b-mixed"><b>连续 C 型日 · 扎兰屯</b><small>收账查账、资金管理、站内问题集中解决；副业暂停</small></div></div>
+      <div class="tl-row"><div class="tl-time">11–19 日</div><div class="tl-block b-side"><b>B 型为主 · 外地</b><small>创作黄金窗口：装修接单、B 站更新 1–2 条、手捻制作与作品集</small></div></div>
+      <div class="tl-row"><div class="tl-time">20–27 日</div><div class="tl-block b-work"><b>A 型为主 · 外地</b><small>下月活动策划、库存预查、月末账务准备；副业新单逐步收尾</small></div></div>
+      <div class="tl-row"><div class="tl-time">28 日起</div><div class="tl-block b-mixed"><b>返程扎兰屯，进入密集期</b><small>途经北京的航班日顺路潘家园采购石料，不单独占用行程</small></div></div>
+    </div>
+  </div>
+
+  <div class="view" id="v-fat">
+    <div class="kimi-section-title" style="font-size:15px;">减重计划 · 年底恢复正常体重</div>
+    <div class="m-note" style="font-size:13px;">目标：78 kg → <b>63.5 kg</b>（163 cm，BMI 29.4 → 23.9）· 每周 0.7–0.8 kg · 每日总缺口约 800–850 kcal（饮食 550–600 + 运动 250–300）</div>
+    <div class="prog"><div class="prog-fill" id="fatFill"></div></div>
+    <div class="prog-labels"><span>78 kg · 8/21</span><span id="fatNowLabel"></span><span>63.5 kg · 12/31</span></div>
+    <div class="phase-grid">
+      <div class="ph-card" id="ph1"><h4>启动期<span class="now-tag" hidden>当前</span></h4><div class="tt">8/21 – 10/19</div><div class="ph-t">78 → 72 kg</div><p>习惯建立期；前期掉秤快（含水分），享受速度红利</p></div>
+      <div class="ph-card" id="ph2"><h4>攻坚期<span class="now-tag" hidden>当前</span></h4><div class="tt">10/20 – 11/30</div><div class="ph-t">72 → 67.5 kg</div><p>速度放缓至 0.6–0.7 kg/周；守住蛋白质与力量训练</p></div>
+      <div class="ph-card" id="ph3"><h4>冲刺期<span class="now-tag" hidden>当前</span></h4><div class="tt">12/1 – 12/31</div><div class="ph-t">67.5 → 63.5 kg</div><p>最难阶段，允许每周只掉 0.5 kg；落点 63.5–65.5 均属成功</p></div>
+    </div>
+    <div class="kimi-section-title" style="font-size:14px;">饮食</div>
+    <ul class="rule-list">
+      <li><b>每日 1300–1450 kcal</b> · 蛋白质 95–105 g · 低 GI 主食 110–130 g · 烹调油 ≤ 20 g</li>
+      <li>进食窗口 10:00–18:00 不变：早午餐 + 晚餐两餐制；每周日早午餐为自由餐（≤ 700 kcal）</li>
+      <li>完整一周菜单与采购清单见工作区《减重食谱计划.md》（v2）</li>
+    </ul>
+    <div class="kimi-section-title" style="font-size:14px;">运动（已同步进各日型）</div>
+    <ul class="rule-list">
+      <li>早午饭后：<b>椭圆机 40–45 分钟</b>（阻力上调一档）</li>
+      <li>晚饭后：<b>快走 25–30 分钟</b>（微喘，兼压餐后血糖）</li>
+      <li>周二 / 周四 / 周六：睡前核心扩展为<b>力量训练 25–30 分钟</b>（深蹲、臀桥、跪姿俯卧撑、平板支撑）——保肌肉，决定年底之后守不守得住</li>
+    </ul>
+    <div class="kimi-section-title" style="font-size:14px;">追踪与红线</div>
+    <ul class="rule-list">
+      <li><b>每周一空腹称重</b>，只看周趋势；连续 2 周不动才调整——先砍主食，不动蛋白质，总热量不低于 1200 kcal</li>
+      <li>密集期聚餐日：取热量上限 1450 kcal + 保住椭圆机，不追缺口，只求不增</li>
+      <li><b>郁期红线</b>：回到 1450 kcal 上限、暂停称重、力量可停，只保留椭圆机与进食窗口——稳定永远比速度重要</li>
+      <li>每月对照阶段目标复盘：落后 1 kg 以内不动方案，落后 2 kg 以上才收紧</li>
+    </ul>
+  </div>
+</div>
+<script>
+  function bindChips(sel, key, views){
+    document.querySelectorAll(sel).forEach(function(c){
+      c.addEventListener('click',function(){
+        document.querySelectorAll(sel).forEach(function(x){x.classList.remove('is-selected');x.setAttribute('aria-pressed','false');});
+        c.classList.add('is-selected');c.setAttribute('aria-pressed','true');
+        views.forEach(function(v){document.getElementById(v).classList.remove('on');});
+        document.getElementById(views.length ? ({v:'v-',t:'t-'})[key]+c.dataset[key] : '').classList.add('on');
+      });
+    });
+  }
+  bindChips('[data-v]','v',['v-type','v-week','v-month','v-fat']);
+  bindChips('[data-t]','t',['t-a','t-b','t-c','t-d']);
+
+  (function(){
+    var start=new Date(2026,7,21), end=new Date(2026,11,31), now=new Date();
+    var total=end-start, el=Math.min(Math.max(now-start,0),total);
+    var pct=el/total*100;
+    var expW=(78-14.5*el/total).toFixed(1);
+    document.getElementById('fatFill').style.width=pct+'%';
+    document.getElementById('fatNowLabel').textContent='时间进度 '+pct.toFixed(0)+'% · 参考体重 ≈ '+expW+' kg';
+    var phId = now < new Date(2026,9,20) ? 'ph1' : (now < new Date(2026,11,1) ? 'ph2' : 'ph3');
+    var card=document.getElementById(phId);
+    card.classList.add('now');
+    card.querySelector('.now-tag').hidden=false;
+  })();
+</script>
+</template>
+<template id="tpl-chk">
+<style>
+  html,body{margin:0;padding:0;font-family:var(--kimi-font-sans);}
+  button,input,select,textarea{font:inherit;}
+  .wrap{padding:var(--kimi-space-4);display:flex;flex-direction:column;gap:var(--kimi-space-4);}
+  .head{display:flex;align-items:baseline;justify-content:space-between;gap:var(--kimi-space-3);flex-wrap:wrap;}
+  .date{font-size:14px;color:var(--kimi-color-text-secondary);font-variant-numeric:tabular-nums;}
+  .prog-wrap{display:flex;align-items:center;gap:var(--kimi-space-3);}
+  .prog{flex:1;height:8px;border-radius:var(--kimi-radius-full);background:color-mix(in srgb,var(--kimi-color-text-quaternary) 25%,transparent);overflow:hidden;}
+  .prog-fill{height:100%;width:0;background:var(--kimi-chart-3);border-radius:inherit;transition:width var(--t-normal) var(--ease-out);}
+  .prog-num{font-size:13px;color:var(--kimi-color-text-secondary);font-variant-numeric:tabular-nums;white-space:nowrap;}
+  .done-banner{display:none;font-size:13px;padding:var(--kimi-space-2) var(--kimi-space-3);border-radius:var(--kimi-radius-chip);background:color-mix(in srgb,var(--kimi-color-positive) 12%,transparent);color:var(--kimi-color-positive);}
+  .done-banner.show{display:block;}
+  .sec{display:flex;flex-direction:column;}
+  .sec-title{font-size:13px;font-weight:500;color:var(--kimi-color-text-tertiary);padding-bottom:var(--kimi-space-1);border-bottom:1px solid var(--kimi-color-border);}
+  .task{display:flex;align-items:flex-start;gap:var(--kimi-space-3);padding:var(--kimi-space-2) 0;border-bottom:1px solid color-mix(in srgb,var(--kimi-color-border) 50%,transparent);}
+  .task:last-child{border-bottom:none;}
+  .task input[type=checkbox]{margin-top:3px;accent-color:var(--kimi-color-text-primary);width:16px;height:16px;flex-shrink:0;cursor:pointer;}
+  .task-body{flex:1;display:flex;flex-direction:column;gap:var(--kimi-space-1);min-width:0;}
+  .task-name{font-size:14px;font-weight:500;transition:color var(--t-fast) var(--ease-out);}
+  .task-sub{font-size:12px;color:var(--kimi-color-text-tertiary);}
+  .task.done .task-name{color:var(--kimi-color-text-quaternary);text-decoration:line-through;}
+  .task select{max-width:100%;}
+  .meal-select{font-size:13px;}
+  .meal-detail{display:none;border:1px solid var(--kimi-color-border);border-radius:var(--kimi-radius-input);padding:var(--kimi-space-2) var(--kimi-space-3);font-size:12px;line-height:1.7;color:var(--kimi-color-text-secondary);}
+  .meal-detail.show{display:block;}
+  .meal-detail b{color:var(--kimi-color-text-primary);font-weight:500;}
+  .rules{font-size:12px;color:var(--kimi-color-text-tertiary);line-height:1.7;padding:var(--kimi-space-2) 0 0;}
+  .w-row{display:flex;align-items:center;gap:var(--kimi-space-2);}
+  .w-input{width:90px;}
+  .w-hist{font-size:12px;color:var(--kimi-color-text-tertiary);font-variant-numeric:tabular-nums;}
+  .hidden{display:none;}
+  .today-tag{font-size:11px;color:var(--kimi-chart-1);margin-left:var(--kimi-space-1);}
+</style>
+
+
+<div class="wrap">
+  <div class="head">
+    <div class="kimi-page-title">每日饮食与运动打卡</div>
+    <div class="date" id="dateLabel"></div>
+  </div>
+
+  <div class="prog-wrap">
+    <div class="prog"><div class="prog-fill" id="progFill"></div></div>
+    <div class="prog-num" id="progNum">0 / 0</div>
+  </div>
+  <div class="done-banner" id="doneBanner">今日任务全部完成，好好休息。</div>
+
+  <div class="sec">
+    <div class="sec-title">饮食 · 进食窗口 10:00–18:00</div>
+    <div class="task" data-k="lunch"><input type="checkbox" id="c-lunch"><div class="task-body"><span class="task-name">早午餐</span>
+      <select class="kimi-select meal-select" id="s-lunch">
+        <optgroup label="蒙餐">
+          <option value="A1">咸奶茶 + 手把羊肉（瘦）+ 莜面 ≈620</option>
+          <option value="A2">锅茶 + 煮蛋 2 个 + 拌沙葱 ≈600</option>
+          <option value="A3">清汤羊杂 + 杂粮焙子半个 ≈580</option>
+          <option value="A4">布里亚特包子改良 4 个 + 黄瓜 ≈620</option>
+          <option value="A5">烤羊排（瘦）+ 苦菊 + 蒸土豆 ≈630</option>
+        </optgroup>
+        <optgroup label="东北菜">
+          <option value="A6">酸菜白肉瘦肉锅 + 杂粮饭半碗 ≈600</option>
+          <option value="A7">小鸡炖蘑菇 + 米饭半碗 ≈610</option>
+          <option value="A8">得莫利炖鱼 + 米饭半碗 ≈600</option>
+          <option value="A9">锅包肉改良（空气炸锅版）+ 米饭半碗 ≈620</option>
+          <option value="A10">大拉皮（鸡丝，麻酱减半）≈560</option>
+          <option value="A11">蘸酱菜 + 玉米 + 茶蛋 2 个 ≈560</option>
+          <option value="A12">地三鲜少油版 + 蛋 2 个 + 米饭半碗 ≈580</option>
+        </optgroup>
+        <optgroup label="朝鲜 · 韩式">
+          <option value="A13">荞麦冷面 + 牛肉片 + 蛋 ≈580</option>
+          <option value="A14">大酱汤 + 糙米饭半碗 + 辣白菜 ≈560</option>
+          <option value="A15">参鸡汤（去皮）≈620</option>
+          <option value="A16">韩式烤牛肉 + 生菜包 + 米饭半碗 ≈600</option>
+          <option value="A17">辣白菜炒鸡胸 + 糙米饭半碗 ≈580</option>
+          <option value="A18">海鲜葱饼改良 + 大酱汤小碗 ≈600</option>
+        </optgroup>
+        <optgroup label="俄餐">
+          <option value="A19">红菜汤 + 全麦列巴 + 煮蛋 ≈580</option>
+          <option value="A20">罐焖牛肉 + 列巴 ≈600</option>
+          <option value="A21">俄式烤鱼 + 煮土豆 ≈590</option>
+          <option value="A22">奥利维耶沙拉改良 + 列巴 ≈570</option>
+          <option value="A23">荞麦布林饼 + 烟熏三文鱼 ≈580</option>
+        </optgroup>
+        <optgroup label="北美西餐">
+          <option value="A24">烤牛排 + 烤蔬菜 + 小土豆 ≈650</option>
+          <option value="A25">烤火鸡胸 + 抱子甘蓝 + 红薯泥 ≈600</option>
+          <option value="A26">水波蛋 + 烤番茄蘑菇 + 全麦麦芬 ≈560</option>
+          <option value="A27">美式辣味炖豆 + 米饭半碗 ≈590</option>
+          <option value="A28">鸡肉卷饼（无芝士）≈600</option>
+        </optgroup>
+        <optgroup label="法式 · 欧陆">
+          <option value="A29">红酒炖鸡胸 + 土豆泥 ≈590</option>
+          <option value="A30">马赛鱼汤 + 全麦面包 ≈580</option>
+          <option value="A31">尼斯沙拉 + 面包 ≈570</option>
+          <option value="A32">法式炖菜 + 煎鸡胸 + 杂粮饭半碗 ≈570</option>
+        </optgroup>
+        <optgroup label="地中海 · 希腊">
+          <option value="A33">希腊沙拉 + 烤鸡胸 + 皮塔半张 ≈560</option>
+          <option value="A34">柠檬橄榄油烤鱼 + 时蔬 + 土豆 ≈580</option>
+          <option value="A35">鹰嘴豆泥 + 皮塔 + 烤蔬菜串 + 蛋 ≈570</option>
+        </optgroup>
+        <optgroup label="北欧">
+          <option value="A36">开放式三明治（腌三文鱼 + 黑麦）≈560</option>
+          <option value="A37">北欧肉丸改良 + 土豆泥 ≈600</option>
+          <option value="A38">北欧鱼汤 + 黑麦面包 ≈580</option>
+        </optgroup>
+        <optgroup label="泰式">
+          <option value="A39">冬阴功虾汤（少椰浆）+ 糙米饭半碗 ≈560</option>
+          <option value="A40">青木瓜沙拉 + 鸡胸串 + 糯米半拳 ≈560</option>
+          <option value="A41">泰式牛肉沙拉 + 米饭半碗 ≈570</option>
+          <option value="A42">泰北咖喱面改良 ≈600</option>
+          <option value="A43">青咖喱鸡（椰浆减半）+ 糙米半碗 ≈620</option>
+        </optgroup>
+        <optgroup label="越南 · 新马">
+          <option value="A44">越南牛肉河粉 ≈590</option>
+          <option value="A45">甘蔗虾改良 + 米粉 + 生菜 ≈560</option>
+          <option value="A46">肉骨茶 + 米饭半碗 ≈590</option>
+          <option value="A47">叻沙改良（椰浆减半）≈600</option>
+          <option value="A48">海南鸡饭（糙米版）≈620</option>
+        </optgroup>
+        <optgroup label="粤菜">
+          <option value="A49">白切鸡（去皮）+ 例汤 + 糙米饭半碗 ≈620</option>
+          <option value="A50">豉汁蒸排骨（瘦）+ 米饭半碗 + 芥蓝 ≈620</option>
+          <option value="A51">鸡蛋瘦肉肠粉 2 条 + 无糖豆浆 ≈560</option>
+          <option value="A52">及第粥 + 白灼生菜 ≈560</option>
+          <option value="A53">煲仔饭改良（糙米 + 去皮鸡腿）≈630</option>
+        </optgroup>
+        <optgroup label="港式">
+          <option value="A54">鲜虾云吞 6 只 + 白灼生菜 ≈560</option>
+          <option value="A55">云吞面 ≈570</option>
+          <option value="A56">碗仔翅改良 + 全麦吐司 ≈540</option>
+          <option value="A57">豉油鸡（去皮）+ 米饭半碗 + 菜心 ≈600</option>
+          <option value="A58">番茄牛肉通粉 ≈580</option>
+        </optgroup>
+        <optgroup label="海南 · 南方">
+          <option value="A59">文昌鸡（去皮）+ 糙米饭半碗 + 黄瓜 ≈620</option>
+          <option value="A60">加积鸭（去皮）+ 鸭汤蔬菜 + 米饭半碗 ≈620</option>
+          <option value="A61">白切东山羊（瘦）+ 米饭半碗 + 地瓜叶 ≈610</option>
+          <option value="A62">后安粉 ≈570</option>
+          <option value="A63">清补凉无糖版 + 煮蛋 2 个 ≈520</option>
+        </optgroup>
+        <optgroup label="清真">
+          <option value="A64">酱牛肉 + 杂粮煎饼 + 黄瓜木耳 ≈600</option>
+          <option value="A65">手抓饭糙米版（瘦羊肉）≈620</option>
+          <option value="A66">羊排萝卜汤 + 馕 1/4 ≈580</option>
+          <option value="A67">牛肉烧麦改良 6 个 + 小米粥 ≈600</option>
+        </optgroup>
+        <optgroup label="鲁菜 · 山东">
+          <option value="A68">鲅鱼饺子 8 个 + 凉拌白菜心 ≈600</option>
+          <option value="A69">海鲜疙瘩汤 ≈560</option>
+          <option value="A70">奶汤蒲菜 + 煎饼半张 ≈550</option>
+          <option value="A71">淄博小饼卷烤肉（瘦牛肉）≈590</option>
+          <option value="A72">糖醋鱼改良（减糖）+ 米饭半碗 ≈600</option>
+          <option value="A73">葱烧豆腐 + 玉米饼子 ≈570</option>
+          <option value="A74">把子肉瘦版 + 米饭半碗 + 虎皮青椒 ≈630</option>
+        </optgroup>
+        <optgroup label="复原菜系">
+          <option value="A75">拨霞供（南宋古法涮锅）≈550</option>
+          <option value="A76">蟹酿橙 + 米饭半碗 ≈520</option>
+          <option value="A77">槐叶冷淘（唐代冷面）≈580</option>
+          <option value="A78">东坡羹 + 水煮蛋 2 个 ≈480</option>
+          <option value="A79">东坡肉改良小份 + 菜心 ≈600</option>
+          <option value="A80">蒋侍郎豆腐 + 米饭半碗 ≈560</option>
+          <option value="A81">雪梨炒鸡 + 糙米饭半碗 ≈570</option>
+          <option value="A82">开水白菜 + 鸡胸 ≈520</option>
+          <option value="A83">鸡豆花 + 木耳 + 米饭半碗 ≈500</option>
+          <option value="A84">茄鲞改良（蒸制少油）+ 糙米 ≈560</option>
+          <option value="A85">豆腐皮包子 + 蛋花汤 ≈540</option>
+          <option value="A86">火腿鲜笋汤 + 米饭半碗 ≈520</option>
+          <option value="A87">枣泥山药糕 + 蛋 + 豆浆 ≈520</option>
+        </optgroup>
+        <optgroup label="快捷兜底">
+          <option value="A88">清汤麻辣烫（蔬菜 + 豆腐 + 瘦肉片）≈500</option>
+          <option value="A89">干噎酸奶碗 + 莓果坚果燕麦 + 蛋 ≈520</option>
+          <option value="free">自由餐（每周日额度，≤700 kcal）</option>
+          <option value="out">外食 / 应酬（一荤一素一汤，主食减半）</option>
+        </optgroup>
+      </select>
+      <div class="meal-detail" id="d-lunch"></div>
+    </div></div>
+    <div class="task" data-k="dinner"><input type="checkbox" id="c-dinner"><div class="task-body"><span class="task-name">晚餐（18:00 前结束）</span>
+      <select class="kimi-select meal-select" id="s-dinner">
+        <optgroup label="蒙餐">
+          <option value="B1">烤羊腿瘦肉 + 黄瓜 + 蒸南瓜 ≈480</option>
+          <option value="B2">手把肉（瘦）+ 咸奶茶小碗 + 拌黄瓜 ≈470</option>
+          <option value="B3">奶豆腐蔬菜沙拉 ≈430</option>
+          <option value="B4">烤羊排（瘦）+ 拌沙葱 + 小米粥小碗 ≈480</option>
+          <option value="B5">羊肉冬瓜汤 + 蒸玉米 ≈460</option>
+          <option value="B6">酸奶拌炒米 + 酱牛肉 + 黄瓜 ≈450</option>
+        </optgroup>
+        <optgroup label="东北菜">
+          <option value="B7">铁锅炖鱼 + 豆腐白菜 ≈460</option>
+          <option value="B8">酸菜汆白肉瘦版 + 玉米半根 ≈460</option>
+          <option value="B9">大拌菜 + 酱牛肉 + 玉米半根 ≈450</option>
+          <option value="B10">得莫利炖鱼小份 + 拌菠菜 ≈470</option>
+          <option value="B11">小鸡炖蘑菇小份 + 拌黄瓜 ≈450</option>
+          <option value="B12">酸菜炖冻豆腐 + 瘦排骨 ≈460</option>
+          <option value="B13">白菜猪肉炖粉条改良 ≈480</option>
+          <option value="B14">溜肉段改良 + 米饭小半碗 ≈490</option>
+          <option value="B15">茄子炖土豆（少油）+ 酱骨架（瘦）≈460</option>
+        </optgroup>
+        <optgroup label="朝鲜 · 韩式">
+          <option value="B16">朝鲜拌饭改良（糙米半碗）≈520</option>
+          <option value="B17">嫩豆腐汤 + 糙米小半碗 ≈470</option>
+          <option value="B18">烤牛里脊 + 生菜包 + 大酱汤小碗 ≈480</option>
+          <option value="B19">冷面小碗 ≈470</option>
+          <option value="B20">拌杂菜改良 + 米饭小半碗 ≈490</option>
+          <option value="B21">部队锅改良（无拉面芝士）≈480</option>
+          <option value="B22">辣炖鸡块（去皮，减糖）≈490</option>
+        </optgroup>
+        <optgroup label="俄餐">
+          <option value="B23">俄式炖牛肉 + 列巴 1 片 ≈500</option>
+          <option value="B24">红菜汤晚餐版 + 鸡胸 ≈430</option>
+          <option value="B25">焗蘑菇鸡胸 + 酸黄瓜 ≈460</option>
+          <option value="B26">俄式烤肉饼 + 炖卷心菜 ≈470</option>
+          <option value="B27">冷杂拌汤（酸奶底）+ 黑麦半片 ≈440</option>
+        </optgroup>
+        <optgroup label="西餐 · 地中海 · 北欧">
+          <option value="B28">希腊烤鸡胸串 + 烤蔬菜 ≈450</option>
+          <option value="B29">照烧鸡胸 + 西兰花 + 糙米小半碗 ≈490</option>
+          <option value="B30">烤三文鱼 + 芦笋 + 小土豆 ≈500</option>
+          <option value="B31">北非蛋 + 全麦面包 ≈460</option>
+          <option value="B32">番茄牛肉丸全麦意面 ≈510</option>
+          <option value="B33">Tzatziki 烤鸡胸 + 皮塔半张 ≈450</option>
+          <option value="B34">腌三文鱼 + 黑麦面包 + 黄瓜沙拉 ≈440</option>
+          <option value="B35">北欧鱼汤晚餐版 ≈460</option>
+          <option value="B36">烤去皮鸡腿 + 根茎蔬菜 + 蒸玉米 ≈490</option>
+          <option value="B37">法式洋葱汤改良 + 全麦面包 ≈450</option>
+          <option value="B38">地中海番茄炖鱼 + 蒸土豆 ≈480</option>
+          <option value="B39">希腊酿甜椒 2 个 ≈470</option>
+          <option value="B40">烤猪里脊 + 苹果洋葱 + 蒸南瓜 ≈480</option>
+          <option value="B41">西班牙冷汤 + 烤鸡胸 + 面包 ≈440</option>
+        </optgroup>
+        <optgroup label="泰式 · 越南">
+          <option value="B42">泰式柠檬蒸鱼 + 空心菜 ≈430</option>
+          <option value="B43">越式春卷 4 卷 ≈440</option>
+          <option value="B44">泰式炒河粉改良 ≈500</option>
+          <option value="B45">越南酸汤鱼 + 糙米小半碗 ≈440</option>
+          <option value="B46">打抛鸡胸 + 米饭小半碗 ≈480</option>
+          <option value="B47">黄咖喱虾（椰浆减半）+ 米饭小半碗 ≈490</option>
+          <option value="B48">越式烤牛肉沙拉 ≈460</option>
+        </optgroup>
+        <optgroup label="粤 · 港 · 海南">
+          <option value="B49">清蒸鲈鱼 + 西兰花 + 糙米小半碗 ≈450</option>
+          <option value="B50">白灼虾 + 凉拌苦瓜 + 蒸红薯 ≈460</option>
+          <option value="B51">冬瓜排骨汤 + 秋葵 + 玉米半根 ≈470</option>
+          <option value="B52">海南酸粉改良 ≈480</option>
+          <option value="B53">豉汁蒸鱼腩 + 菜心 + 米饭小半碗 ≈470</option>
+          <option value="B54">冬瓜薏米汤 + 白切鸡 ≈450</option>
+          <option value="B55">椰子饭改良 + 白切东山羊 ≈490</option>
+          <option value="B56">滑蛋虾仁 + 菜心 + 米饭小半碗 ≈480</option>
+          <option value="B57">支竹羊腩煲改良 ≈490</option>
+          <option value="B58">港式咖喱鸡（椰浆减半）+ 米饭小半碗 ≈490</option>
+          <option value="B59">椰子鸡汤晚餐版 ≈440</option>
+          <option value="B60">白灼鱿鱼 + 姜葱 + 蒸芋头 ≈440</option>
+        </optgroup>
+        <optgroup label="清真 · 鲁菜">
+          <option value="B61">黄焖牛肉（瘦）+ 土豆胡萝卜 ≈500</option>
+          <option value="B62">烤包子改良 2 个 + 酸奶黄瓜 ≈480</option>
+          <option value="B63">羊肉氽面改良 ≈490</option>
+          <option value="B64">葱烧海参 + 小米粥小碗 ≈440</option>
+          <option value="B65">鲅鱼炖豆腐 + 拌白菜心 ≈470</option>
+          <option value="B66">煎饼卷菜 + 酱牛肉 ≈460</option>
+          <option value="B67">清真烧麦（瘦羊肉 4 个）+ 拌黄瓜 ≈470</option>
+          <option value="B68">葱爆羊肉（少油）+ 米饭小半碗 ≈490</option>
+          <option value="B69">胶东焖黄花鱼 + 玉米饼子半个 ≈470</option>
+          <option value="B70">木须肉改良 + 米饭小半碗 ≈480</option>
+        </optgroup>
+        <optgroup label="复原菜系">
+          <option value="B71">随园蒸鲫鱼 + 拌菠菜 ≈480</option>
+          <option value="B72">东坡羹 + 水煮蛋 2 个 ≈450</option>
+          <option value="B73">火腿冬瓜汤 + 蒸山药 ≈440</option>
+          <option value="B74">太守羹 + 全麦薄饼 ≈430</option>
+          <option value="B75">槐叶冷淘小碗 ≈480</option>
+          <option value="B76">蟹酿橙 + 时蔬 + 蒸南瓜 ≈470</option>
+          <option value="B77">莲房鱼包改良 + 时蔬 ≈460</option>
+          <option value="B78">山海兜（粉皮卷蒸 4 卷）≈460</option>
+          <option value="B79">酒酿清蒸鸭（红楼）+ 拌芹菜 ≈470</option>
+          <option value="B80">随园白片鸡 + 米饭小半碗 ≈460</option>
+          <option value="B81">签菜煨春笋 + 蒸薯 ≈440</option>
+        </optgroup>
+        <optgroup label="外食额度">
+          <option value="hotpot">火锅（清汤攻略版，用当周自由额度）</option>
+          <option value="out">外食 / 应酬（清淡，主食减半）</option>
+        </optgroup>
+      </select>
+      <div class="meal-detail" id="d-dinner"></div>
+    </div></div>
+    <div class="task" data-k="window"><input type="checkbox" id="c-window"><div class="task-body"><span class="task-name">窗口外未进食</span><span class="task-sub">18:00 后只喝水 / 无糖茶 / 黑咖啡</span></div></div>
+    <div class="rules">通用分量：肉类均为生重 · 米饭/糙米 半碗＝生米 40 g、小半碗＝30 g · 烹调油早午餐 ≤ 10 g、晚餐 ≤ 8 g · 蔬菜不限量 · 采购量已含损耗余量，照单买即可，做多做少都不行</div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title">运动</div>
+    <div class="task" data-k="ellip"><input type="checkbox" id="c-ellip"><div class="task-body"><span class="task-name">椭圆机 40–45 分钟</span><span class="task-sub">早午饭后进行，阻力上调一档</span></div></div>
+    <div class="task" data-k="walk"><input type="checkbox" id="c-walk"><div class="task-body"><span class="task-name">晚饭后快走 25–30 分钟</span><span class="task-sub">微喘强度，压餐后血糖</span></div></div>
+    <div class="task" data-k="core"><input type="checkbox" id="c-core"><div class="task-body"><span class="task-name">睡前核心锻炼 20 分钟</span><span class="task-sub">23:10 开始</span></div></div>
+    <div class="task hidden" data-k="strength" id="task-strength"><input type="checkbox" id="c-strength"><div class="task-body"><span class="task-name">力量训练 25–30 分钟<span class="today-tag">今天</span></span><span class="task-sub">深蹲 15×3 · 臀桥 15×3 · 跪姿俯卧撑 10×3 · 平板 45 秒×3</span></div></div>
+  </div>
+
+  <div class="sec hidden" id="sec-weigh">
+    <div class="sec-title">周一 · 称重</div>
+    <div class="task" data-k="weigh">
+      <input type="checkbox" id="c-weigh">
+      <div class="task-body">
+        <span class="task-name">空腹称重并记录</span>
+        <div class="w-row">
+          <input class="kimi-input w-input" id="w-input" type="number" step="0.1" min="40" max="120" placeholder="kg">
+          <span class="w-hist" id="w-hist"></span>
+        </div>
+        <span class="task-sub">对照阶段目标：10/19 → 72 kg · 11/30 → 67.5 kg · 12/31 → 63.5 kg</span>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+var MEALS = {
+A1:{b:'羊腿瘦肉 150 g · 莜面 100 g · 黄瓜 1 根 · 砖茶 + 鲜奶 · 花椒姜片',p:'羊肉熟后吃 100 g 以内；奶茶咸口不加糖'},
+A2:{b:'炒米 30 g · 奶豆腐 20 g · 砖茶 + 鲜奶 · 鸡蛋 2 个 · 沙葱（或小葱）1 把'},
+A3:{b:'羊肚/羊肝合计 180 g · 杂粮焙子 1 个 · 香菜 · 姜葱',p:'焙子只吃半个；汤撇浮油'},
+A4:{b:'瘦羊肉馅 150 g · 全麦面粉 80 g · 洋葱 1/4 个 · 黄瓜 1 根',p:'包子 4 个即止，不多蒸'},
+A5:{b:'羊排（去肥）150 g · 苦菊 1 把 · 土豆 200 g · 孜然黑胡椒'},
+A6:{b:'猪里脊 120 g · 酸菜 250 g · 冻豆腐 150 g · 杂粮米 40 g'},
+A7:{b:'去皮鸡腿 150 g · 榛蘑/香菇 50 g · 粉条 30 g · 大米 40 g'},
+A8:{b:'草鱼/鲤鱼 200 g · 豆腐 150 g · 白菜 · 粉条 20 g · 大米 40 g'},
+A9:{b:'猪里脊 120 g · 土豆淀粉少量 · 大米 40 g · 黄瓜 1 根 · 糖醋（糖减半）',p:'空气炸锅版，肉段 8 块以内'},
+A10:{b:'东北拉皮 150 g · 鸡胸 60 g · 黄瓜 1 根 · 鸡蛋 1 个 · 麻酱 15 g',p:'麻酱就 15 g，别手抖'},
+A11:{b:'干豆腐 120 g · 黄瓜生菜 · 鸡蛋 3 个 · 玉米 1 根 · 黄豆酱'},
+A12:{b:'茄子 1 个 · 土豆 150 g · 青椒 1 个 · 鸡蛋 2 个 · 大米 40 g',p:'先蒸后烧，油 ≤ 8 g'},
+A13:{b:'荞麦冷面 80 g · 牛肉 70 g · 鸡蛋 1 个 · 黄瓜 + 梨 · 冷面汤（不加糖）'},
+A14:{b:'豆腐 200 g · 西葫芦 · 菌菇 · 牛肉 60 g · 韩式大酱 · 糙米 40 g · 辣白菜'},
+A15:{b:'童子鸡半只（去皮）· 糯米 30 g · 红枣 2 枚 · 栗子 2 个',p:'汤喝一碗，鸡吃去皮部分'},
+A16:{b:'牛上脑 130 g · 生菜 1 棵 · 蒜片辣椒 · 大米 40 g'},
+A17:{b:'鸡胸 170 g · 辣白菜 100 g · 糙米 40 g · 豆芽'},
+A18:{b:'全麦粉 60 g · 鱿鱼 80 g · 虾仁 60 g · 小葱 · 豆腐 150 g + 大酱（配汤）',p:'饼 3 块，少油煎'},
+A19:{b:'牛肉 70 g · 甜菜根 1 个 · 卷心菜 · 土豆 100 g · 全麦列巴 60 g · 鸡蛋 1 个'},
+A20:{b:'瘦牛肉 120 g · 胡萝卜洋葱芹菜 · 番茄 · 列巴 40 g'},
+A21:{b:'鳕鱼 220 g · 无糖酸奶 100 g（替酸奶油）· 土豆 180 g · 柠檬莳萝'},
+A22:{b:'鸡胸 90 g · 土豆 120 g · 酸黄瓜 2 根 · 鸡蛋 1 个 · 胡萝卜 · 无糖酸奶（替蛋黄酱）'},
+A23:{b:'荞麦粉 50 g · 鸡蛋 1 个 · 牛奶少量 · 烟熏三文鱼 70 g · 无糖酸奶 · 黄瓜',p:'布林饼 2 张'},
+A24:{b:'牛排 130 g · 彩椒西葫芦洋葱 · 小土豆 180 g'},
+A25:{b:'火鸡胸（或鸡胸）130 g · 抱子甘蓝 200 g · 红薯 180 g'},
+A26:{b:'鸡蛋 2 个 · 番茄 2 个 · 蘑菇 150 g · 全麦英式麦芬 1 个'},
+A27:{b:'瘦牛肉末 110 g · 芸豆/腰豆 150 g · 番茄罐头 1 · 洋葱 · 大米 40 g'},
+A28:{b:'全麦卷饼 1 张 · 鸡胸 110 g · 生菜番茄 · 青柠香菜（莎莎酱）',p:'不加芝士酸奶油'},
+A29:{b:'鸡胸 130 g · 蘑菇 150 g · 洋葱 · 红酒 100 ml · 土豆 120 g'},
+A30:{b:'鱼虾贝合计 200 g · 番茄洋葱蒜 · 全麦面包 30 g'},
+A31:{b:'水浸金枪鱼 110 g · 鸡蛋 1 个 · 四季豆 100 g · 番茄橄榄 · 面包 30 g'},
+A32:{b:'茄子西葫芦番茄彩椒合计 400 g · 鸡胸 110 g · 杂粮米 40 g'},
+A33:{b:'feta 30 g · 番茄黄瓜橄榄 · 鸡胸 130 g · 全麦皮塔半张',p:'feta 减半是热量关键'},
+A34:{b:'鲈鱼/鲷鱼 200 g · 柠檬 · 时蔬 · 土豆 120 g · 橄榄油 5 g'},
+A35:{b:'鹰嘴豆泥 80 g · 全麦皮塔 1 张 · 彩椒洋葱 · 鸡蛋 1 个'},
+A36:{b:'黑麦面包 2 片 · 腌三文鱼 90 g · 无糖酸奶 + 莳萝 · 黄瓜'},
+A37:{b:'瘦牛肉馅 150 g · 土豆 150 g · 越橘/蔓越莓酱少量 · 黄瓜',p:'肉丸 6 个'},
+A38:{b:'鳕鱼 100 g + 三文鱼 60 g · 胡萝卜芹菜根 · 牛奶 200 ml · 黑麦面包 40 g'},
+A39:{b:'虾 120 g · 草菇/海鲜菇 150 g · 椰浆 30 ml · 冬阴功料（香茅南姜柠檬叶或料包）· 糙米 40 g',p:'椰浆就 30 ml'},
+A40:{b:'青木瓜 200 g · 鸡胸 120 g · 糯米 40 g · 长豆番茄 · 青柠鱼露',p:'糯米半拳量'},
+A41:{b:'瘦牛肉 110 g · 薄荷洋葱 · 青柠鱼露 · 大米 40 g · 生菜'},
+A42:{b:'鸡胸 110 g · 荞麦面/鸡蛋面 50 g · 椰浆 40 ml · 泰北咖喱酱 · 酸菜'},
+A43:{b:'鸡胸 110 g · 椰浆 50 ml · 青咖喱酱 · 茄子笋 · 糙米 40 g'},
+A44:{b:'干河粉 70 g · 牛肉 90 g · 豆芽九层塔 · 青柠 · 牛骨汤'},
+A45:{b:'虾仁 140 g（剁茸）· 甘蔗/竹签 · 米粉 40 g · 生菜薄荷',p:'烤而非炸'},
+A46:{b:'瘦排骨 150 g · 肉骨茶料包 · 大蒜 · 大米 40 g · 青菜'},
+A47:{b:'虾 90 g · 米粉 60 g · 椰浆 40 ml · 叻沙酱 · 豆芽',p:'椰浆减半是必须'},
+A48:{b:'去皮鸡腿/鸡胸 110 g · 糙米 40 g · 黄瓜 · 姜蓉蘸料'},
+A49:{b:'去皮鸡腿/鸡胸 130 g · 姜葱 · 糙米 40 g · 菜心 200 g · 例汤料'},
+A50:{b:'瘦排骨 130 g · 豆豉蒜蓉 · 大米 40 g · 芥蓝 200 g',p:'带骨 130 g ≈ 净肉 70 g，别加量'},
+A51:{b:'肠粉 2 条（或粘米粉自制）· 鸡蛋 1 个 · 瘦肉 40 g · 无糖豆浆 300 ml'},
+A52:{b:'猪肝 50 g · 瘦肉 70 g · 鱼片 70 g · 大米 50 g · 生菜'},
+A53:{b:'糙米 50 g · 去皮鸡腿 110 g · 芥蓝 · 豉油少量',p:'锅巴浅尝一两口即可'},
+A54:{b:'鲜虾云吞 6 只 · 生菜 · 无糖豆浆 300 ml',p:'6 只就是 6 只'},
+A55:{b:'鲜虾云吞 4 只 · 全蛋面 70 g · 菜心'},
+A56:{b:'鸡胸 70 g · 木耳 · 鸡蛋 1 个 · 粉丝 15 g · 全麦吐司 1 片',p:'勾薄芡'},
+A57:{b:'去皮鸡腿 130 g · 豉油卤料 · 大米 40 g · 菜心'},
+A58:{b:'牛肉 90 g · 通粉 70 g · 番茄 2 个'},
+A59:{b:'去皮鸡腿 110 g · 糙米 40 g · 黄瓜 · 鸡汤'},
+A60:{b:'加积鸭（去皮）110 g · 鸭汤煮蔬菜 · 大米 40 g'},
+A61:{b:'瘦羊肉 110 g · 大米 40 g · 地瓜叶 · 什锦酱少量'},
+A62:{b:'后安粉 70 g · 瘦肉 70 g · 鸡蛋 1 个 · 猪骨汤 · 青菜'},
+A63:{b:'低脂奶 400 ml · 红豆薏米绿豆合计 80 g · 水果少量 · 鸡蛋 2 个',p:'无糖，杂粮豆当主食'},
+A64:{b:'牛腱 150 g（自酱）或成品酱牛肉 100 g · 杂粮煎饼 1 张 · 黄瓜木耳'},
+A65:{b:'糙米 50 g · 瘦羊肉 90 g · 胡萝卜洋葱 · 葡萄干 10 g'},
+A66:{b:'瘦羊排 130 g · 白萝卜 300 g · 馕 1/4 张 · 香菜'},
+A67:{b:'瘦牛肉馅 120 g · 全麦烧麦皮 · 小米 30 g · 葱姜',p:'烧麦 6 个'},
+A68:{b:'鲅鱼肉 150 g · 韭菜 · 饺子皮 8 张 · 白菜心',p:'饺子 8 个'},
+A69:{b:'全麦粉 70 g · 虾仁 60 g · 蛤蜊 100 g · 鸡蛋 1 个 · 青菜'},
+A70:{b:'蒲菜/茭白 300 g · 鸡胸 70 g · 牛奶 150 ml · 杂粮煎饼半张'},
+A71:{b:'瘦牛肉 110 g · 淄博小饼 2 张 · 小葱 · 甜面酱少量 · 黄瓜',p:'小饼 2 张即止'},
+A72:{b:'鲈鱼 180 g · 糖醋汁（糖减半）· 大米 40 g · 葱姜'},
+A73:{b:'北豆腐 250 g · 大葱 2 根 · 玉米饼子 1 个'},
+A74:{b:'纯瘦肉/瘦五花 90 g · 大米 40 g · 青椒 2 个 · 卤料',p:'肉 80 g 小份，别按饭店量做'},
+A75:{b:'瘦牛肉/鸡胸 130 g（薄切）· 时蔬菌菇 400 g · 清汤底 · 酱醋蒜蘸料',p:'古法火锅，肉片涮完即停'},
+A76:{b:'蟹肉 110 g（或蟹 2 只拆肉）· 橙子 2 个 · 大米 40 g · 时蔬',p:'橙盅 1 个，另一个直接吃'},
+A77:{b:'菠菜（取汁和面）· 全麦粉 80 g · 鸡胸 60 g · 麻酱 10 g · 黄瓜'},
+A78:{b:'荠菜/萝卜白菜 300 g · 糙米 40 g · 鸡蛋 2 个'},
+A79:{b:'纯瘦部位 80 g · 大米 40 g · 菜心 · 绍酒冰糖少量',p:'解馋项，每月 ≤ 2 次，70–80 g 小份'},
+A80:{b:'豆腐 250 g · 虾米 10 g · 菌菇 · 大米 40 g'},
+A81:{b:'鸡胸 110 g · 雪梨 1 个 · 糙米 40 g'},
+A82:{b:'鸡胸 130 g + 鸡骨架（吊汤）· 白菜心 300 g · 大米 40 g'},
+A83:{b:'鸡胸茸 130 g · 清汤 · 木耳 · 大米 40 g'},
+A84:{b:'茄子 1 大个 · 鸡胸丁 60 g · 菌菇笋丁 · 糙米 40 g',p:'茄子蒸制再烧，油 ≤ 8 g'},
+A85:{b:'腐皮 4 张 · 荠菜香干菌菇馅 · 鸡蛋 1 个（做汤）· 黄瓜',p:'包子 4 个'},
+A86:{b:'火腿 35 g · 春笋 200 g · 百叶结 · 大米 40 g'},
+A87:{b:'山药 200 g · 红枣 60 g · 鸡蛋 2 个 · 无糖豆浆 300 ml',p:'糕 2 块，当主食不当点心'},
+A88:{b:'蔬菜菌菇 500 g · 豆腐 150 g · 瘦肉片 110 g · 清汤底',p:'不加丸子油条方便面；辣油另放'},
+A89:{b:'希腊酸奶 220 g · 莓果 120 g · 坚果 12 g · 燕麦 35 g · 鸡蛋 1 个'},
+free:{b:'无需采购——想吃什么都行',p:'≤ 700 kcal；只此一顿，晚餐照常吃清淡'},
+out:{b:'外食守则：一荤一素一汤，清蒸白灼优先',p:'主食减半；密集期聚餐日取当日上限 1450 kcal，只求不增'},
+B1:{b:'羊腿瘦肉 100 g · 黄瓜/沙葱 · 南瓜 200 g'},
+B2:{b:'瘦羊肉 100 g · 咸奶茶料 · 黄瓜'},
+B3:{b:'奶豆腐 50 g · 生菜番茄黄瓜',p:'醋汁，不加糖'},
+B4:{b:'瘦羊排 100 g · 沙葱 · 小米 30 g'},
+B5:{b:'瘦羊肉 90 g · 冬瓜 300 g · 玉米 1 根'},
+B6:{b:'无糖酸奶 170 g · 炒米 20 g · 酱牛肉 60 g · 黄瓜'},
+B7:{b:'鱼 170 g · 豆腐 150 g · 白菜',p:'少油，汤别泡饭'},
+B8:{b:'里脊 90 g · 酸菜 200 g · 冻豆腐 · 玉米半根'},
+B9:{b:'生菜黄瓜番茄等 300 g · 酱牛肉 70 g · 玉米半根'},
+B10:{b:'鱼 140 g · 豆腐 · 菠菜'},
+B11:{b:'去皮鸡腿 110 g · 榛蘑 · 黄瓜',p:'粉条减半'},
+B12:{b:'酸菜 200 g · 冻豆腐 150 g · 瘦排骨 100 g'},
+B13:{b:'瘦肉 90 g · 白菜 300 g · 粉条 30 g'},
+B14:{b:'里脊 110 g · 青椒 · 大米 30 g',p:'空气炸锅版'},
+B15:{b:'茄子 1 个 · 土豆 150 g · 酱骨架（瘦）90 g',p:'少油版'},
+B16:{b:'糙米 40 g · 牛肉末 60 g · 菠菜豆芽胡萝卜 · 鸡蛋 1 个 · 韩式辣酱 1 小勺'},
+B17:{b:'嫩豆腐 220 g · 蛤蜊/牛肉 60 g · 鸡蛋 1 个 · 糙米 30 g'},
+B18:{b:'牛里脊 90 g · 生菜 · 大酱汤料'},
+B19:{b:'荞麦面 60 g · 鸡蛋 1 个 · 牛肉 50 g · 黄瓜'},
+B20:{b:'牛肉 60 g · 菠菜胡萝卜菌菇 · 粉条 20 g · 大米 30 g',p:'少油少糖'},
+B21:{b:'鸡胸 120 g · 豆腐泡菜蔬菜 · 韩式辣酱',p:'无拉面无芝士'},
+B22:{b:'去皮鸡腿 130 g · 土豆 100 g · 胡萝卜 · 辣酱减糖'},
+B23:{b:'瘦牛肉 110 g · 番茄洋葱胡萝卜 · 列巴 40 g'},
+B24:{b:'牛肉 60 g · 甜菜卷心菜 · 鸡胸 70 g',p:'不配面包'},
+B25:{b:'鸡胸 110 g · 蘑菇 150 g · 无糖酸奶（酱）· 酸黄瓜'},
+B26:{b:'瘦牛肉鸡肉混合馅 150 g · 卷心菜 300 g',p:'肉饼 2 个，烤而非煎'},
+B27:{b:'无糖酸奶 250 g · 鸡胸 70 g · 黄瓜萝卜 · 鸡蛋 1 个 · 黑麦面包 30 g'},
+B28:{b:'鸡胸 130 g · 彩椒洋葱 · 柠檬'},
+B29:{b:'鸡胸 130 g · 西兰花 250 g · 糙米 30 g · 低糖照烧汁'},
+B30:{b:'三文鱼 130 g · 芦笋 200 g · 小土豆 120 g'},
+B31:{b:'鸡蛋 2 个 · 番茄 2 个 · 彩椒 1 个 · 全麦面包 40 g'},
+B32:{b:'瘦牛肉馅 120 g（做丸 5 个）· 全麦意面 55 g · 番茄'},
+B33:{b:'鸡胸 110 g · 希腊酸奶 100 g · 黄瓜 · 全麦皮塔半张 · 沙拉菜'},
+B34:{b:'腌三文鱼 90 g · 黑麦面包 40 g · 黄瓜莳萝'},
+B35:{b:'鳕鱼 170 g · 根茎蔬菜 · 牛奶 150 ml'},
+B36:{b:'去皮鸡腿 130 g · 根茎蔬菜 300 g · 玉米 1 根'},
+B37:{b:'洋葱 2 个 · 鸡胸 70 g · 全麦面包 40 g · 高汤',p:'无芝士盖'},
+B38:{b:'鱼 170 g · 番茄 2 个 · 橄榄 5 颗 · 土豆 120 g'},
+B39:{b:'甜椒 2 个 · 牛肉末 60 g · 糙米 40 g · 番茄'},
+B40:{b:'猪里脊 110 g · 苹果 1 个 · 洋葱 · 南瓜 200 g'},
+B41:{b:'番茄黄瓜彩椒（冷汤）· 鸡胸 110 g · 全麦面包 40 g'},
+B42:{b:'鲈鱼 170 g · 青柠鱼露 · 空心菜 250 g'},
+B43:{b:'米纸 4 张 · 虾/鸡胸 120 g · 生菜薄荷 · 鱼露蘸汁',p:'4 卷'},
+B44:{b:'鸡胸 90 g · 河粉 60 g · 豆芽 · 鸡蛋 1 个',p:'少油'},
+B45:{b:'鱼 170 g · 番茄菠萝秋葵 · 糙米 30 g'},
+B46:{b:'鸡胸末 110 g · 九层塔 · 大米 30 g',p:'减糖'},
+B47:{b:'虾 130 g · 椰浆 40 ml · 黄咖喱酱 · 大米 30 g'},
+B48:{b:'牛肉 110 g · 米粉 30 g · 香草生菜'},
+B49:{b:'鲈鱼 170 g · 西兰花 250 g · 糙米 30 g'},
+B50:{b:'虾 170 g · 苦瓜 1 根 · 红薯 150 g'},
+B51:{b:'排骨 110 g · 冬瓜 · 秋葵 · 玉米半根',p:'汤撇浮油'},
+B52:{b:'米粉 60 g · 牛肉 70 g · 酸菜豆芽',p:'少油'},
+B53:{b:'鱼腩/鱼块 170 g · 菜心 · 大米 30 g'},
+B54:{b:'冬瓜薏米 · 去皮鸡 90 g · 木耳'},
+B55:{b:'椰浆 30 ml + 糯米 40 g · 东山羊（瘦）90 g · 青菜',p:'椰子饭小份'},
+B56:{b:'鸡蛋 2 个 · 虾 90 g · 菜心 · 大米 30 g',p:'少油滑蛋'},
+B57:{b:'瘦羊肉 90 g · 腐竹 30 g · 马蹄'},
+B58:{b:'去皮鸡腿 110 g · 椰浆 40 ml · 咖喱 · 大米 30 g'},
+B59:{b:'去皮鸡 110 g · 椰子水 300 ml · 菌菇'},
+B60:{b:'鱿鱼 170 g · 姜葱 · 芋头 180 g'},
+B61:{b:'瘦牛肉 110 g · 土豆 120 g · 胡萝卜'},
+B62:{b:'全麦皮 · 瘦羊肉馅 100 g · 无糖酸奶黄瓜',p:'烤包子 2 个'},
+B63:{b:'全麦面 60 g · 羊肉片 70 g · 香菜'},
+B64:{b:'海参 120 g · 大葱 · 小米 30 g'},
+B65:{b:'鲅鱼 140 g · 豆腐 170 g · 白菜心'},
+B66:{b:'杂粮煎饼半张 · 豆芽韭菜鸡蛋（合菜）· 酱牛肉 60 g'},
+B67:{b:'瘦羊肉馅 100 g · 烧麦皮 4 张 · 黄瓜',p:'4 个'},
+B68:{b:'瘦羊肉 110 g · 大葱 2 根 · 大米 30 g',p:'少油快爆'},
+B69:{b:'黄花鱼 170 g · 玉米饼子半个'},
+B70:{b:'里脊 70 g · 鸡蛋 1 个 · 木耳黄瓜 · 大米 30 g'},
+B71:{b:'鲫鱼 220 g · 火腿丝 10 g · 菠菜'},
+B72:{b:'荠菜萝卜 · 糙米 35 g · 鸡蛋 2 个'},
+B73:{b:'火腿 25 g · 冬瓜 400 g · 山药 180 g',p:'山药当主食'},
+B74:{b:'萝卜荠菜豆腐 · 全麦薄饼 1 张 · 酱牛肉 50 g'},
+B75:{b:'菠菜汁全麦面 55 g · 鸡丝 45 g · 麻酱 8 g'},
+B76:{b:'蟹肉 90 g · 橙子 1 个 · 时蔬 · 南瓜 120 g'},
+B77:{b:'鱼茸 130 g · 莲藕 2 节 · 时蔬'},
+B78:{b:'鱼虾合计 110 g · 笋蕨菜 · 粉皮 4 张',p:'4 卷'},
+B79:{b:'去皮鸭 90 g · 酒酿 20 g · 芹菜'},
+B80:{b:'鸡腿 110 g · 蘸料 · 大米 30 g'},
+B81:{b:'春笋 250 g · 鸡丝 70 g · 薯 150 g'},
+hotpot:{b:'清汤/番茄/菌菇锅底 · 瘦牛羊肉片 200 g · 虾滑/鱼片 · 毛肚鸭血 · 蔬菜菌菇不限 · 蘸料：酱油+醋+蒜+香菜+小米辣',p:'不碰加工丸子、油炸豆皮、面食收尾；不碰麻酱香油碟；占用当周自由餐额度'}
+};
+</script>
+<script>
+(function(){
+  var host = {};
+  var CHECKS = ['lunch','dinner','window','ellip','walk','core','strength','weigh'];
+  var DEF_LUNCH = {1:'A1',2:'A89',3:'A39',4:'A49',5:'A64',6:'A19',0:'free'};
+  var DEF_DINNER = {1:'B49',2:'B61',3:'B17',4:'B29',5:'B7',6:'B42',0:'B51'};
+
+  function todayKey(){
+    var d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  }
+  var today = todayKey();
+  var dow = new Date().getDay();
+
+  var state = { date: today, checks: {}, meals: {}, weights: {} };
+  try {
+    var saved = null;
+    try { saved = JSON.parse(localStorage.getItem("cup-checkin-v1") || "null"); } catch (e) {}
+    if (saved && typeof saved === 'object') {
+      if (saved.weights) state.weights = saved.weights;
+      if (saved.date === today) {
+        state.checks = saved.checks || {};
+        state.meals = saved.meals || {};
+      }
+    }
+  } catch(e){}
+
+  function renderDetail(selId, boxId){
+    var v = document.getElementById(selId).value;
+    var box = document.getElementById(boxId);
+    var m = MEALS[v];
+    if (!m) { box.classList.remove('show'); box.innerHTML = ''; return; }
+    var html = '<b>采购清单</b>：' + m.b;
+    if (m.p) html += '<br><b>分量提醒</b>：' + m.p;
+    box.innerHTML = html;
+    box.classList.add('show');
+  }
+
+  function initMeal(id, defVal, boxId){
+    var sel = document.getElementById(id);
+    var savedVal = state.meals[id];
+    if (savedVal !== undefined && sel.querySelector('option[value="' + savedVal + '"]')) {
+      sel.value = savedVal;
+    } else {
+      sel.value = defVal;
+    }
+    state.meals[id] = sel.value;
+    renderDetail(id, boxId);
+  }
+  initMeal('s-lunch', DEF_LUNCH[dow], 'd-lunch');
+  initMeal('s-dinner', DEF_DINNER[dow], 'd-dinner');
+
+  if (dow === 2 || dow === 4 || dow === 6) {
+    document.getElementById('task-strength').classList.remove('hidden');
+  }
+  if (dow === 1) {
+    document.getElementById('sec-weigh').classList.remove('hidden');
+  }
+
+  var dates = Object.keys(state.weights).sort();
+  if (dates.length) {
+    var last = dates[dates.length-1];
+    document.getElementById('w-hist').textContent = '上次 ' + last.slice(5) + '：' + state.weights[last] + ' kg';
+  }
+  if (state.weights[today]) document.getElementById('w-input').value = state.weights[today];
+
+  document.getElementById('dateLabel').textContent = today + ' · 周' + '日一二三四五六'[dow];
+
+  function visibleChecks(){
+    return CHECKS.filter(function(k){
+      if (k === 'strength') return (dow === 2 || dow === 4 || dow === 6);
+      if (k === 'weigh') return dow === 1;
+      return true;
+    });
+  }
+
+  function refresh(){
+    var vis = visibleChecks(), done = 0;
+    vis.forEach(function(k){
+      var el = document.querySelector('.task[data-k="' + k + '"]');
+      var cb = document.getElementById('c-' + k);
+      var on = !!state.checks[k];
+      cb.checked = on;
+      el.classList.toggle('done', on);
+      if (on) done++;
+    });
+    document.getElementById('progFill').style.width = (vis.length ? done / vis.length * 100 : 0) + '%';
+    document.getElementById('progNum').textContent = done + ' / ' + vis.length;
+    document.getElementById('doneBanner').classList.toggle('show', done === vis.length && vis.length > 0);
+  }
+
+  function persist(){
+    try { localStorage.setItem("cup-checkin-v1", JSON.stringify(state)); } catch (e) {}
+  }
+
+  CHECKS.forEach(function(k){
+    var cb = document.getElementById('c-' + k);
+    if (!cb) return;
+    cb.addEventListener('change', function(){
+      state.checks[k] = cb.checked;
+      refresh(); persist();
+    });
+  });
+  document.getElementById('s-lunch').addEventListener('change', function(){
+    state.meals['s-lunch'] = this.value; persist(); renderDetail('s-lunch','d-lunch');
+  });
+  document.getElementById('s-dinner').addEventListener('change', function(){
+    state.meals['s-dinner'] = this.value; persist(); renderDetail('s-dinner','d-dinner');
+  });
+  document.getElementById('w-input').addEventListener('change', function(){
+    var v = parseFloat(this.value);
+    if (!isNaN(v) && v > 30 && v < 150) {
+      state.weights[today] = v;
+      document.getElementById('w-hist').textContent = '已记录 ' + v + ' kg';
+      state.checks.weigh = true;
+      persist(); refresh();
+    }
+  });
+
+  refresh();
+})();
+</script>
+</template>
+
+<script>
+var SHARED_CSS = ":root {\n  color-scheme: light;\n  --kimi-font-sans: -apple-system, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", sans-serif;\n  --kimi-space-1: 4px; --kimi-space-2: 8px; --kimi-space-3: 12px; --kimi-space-4: 16px; --kimi-space-5: 20px; --kimi-space-6: 24px;\n  --kimi-radius-full: 999px; --kimi-radius-chip: 8px; --kimi-radius-input: 8px; --kimi-radius-button: 8px; --kimi-radius-panel: 12px; --kimi-radius-large: 16px;\n  --kimi-color-text-primary: #1f2329; --kimi-color-text-secondary: #5b6170; --kimi-color-text-tertiary: #969ba3; --kimi-color-text-quaternary: #c3c7cf;\n  --kimi-color-border: #e6e7eb; --kimi-color-surface: #ffffff; --kimi-color-surface-muted: #f3f4f6; --kimi-color-surface-raised: #ffffff;\n  --kimi-color-danger: #e5484d; --kimi-color-warning: #f76b15; --kimi-color-positive: #2ea44f;\n  --kimi-chart-1: #3b6ef0; --kimi-chart-2: #f76b15; --kimi-chart-3: #2ea44f; --kimi-chart-4: #8e4fd8;\n  --t-fast: 140ms; --t-normal: 240ms; --ease-out: cubic-bezier(.2, .8, .2, 1);\n}\nhtml, body { background: #f7f8fa; }\nbody { color: var(--kimi-color-text-primary); }\n.kimi-page-title { font-size: 20px; font-weight: 600; }\n.kimi-text-secondary { color: var(--kimi-color-text-secondary); }\n.kimi-section-title { font-size: 14px; font-weight: 500; color: var(--kimi-color-text-secondary); margin: 0; }\n.kimi-segmented { display: flex; gap: 8px; flex-wrap: wrap; }\n.kimi-chip { padding: 6px 12px; border-radius: var(--kimi-radius-chip); border: 1px solid var(--kimi-color-border); background: #fff; color: var(--kimi-color-text-secondary); font-size: 13px; cursor: pointer; }\n.kimi-chip.is-selected { background: var(--kimi-color-text-primary); color: #fff; border-color: var(--kimi-color-text-primary); }\n.kimi-select, .kimi-input { padding: 8px 10px; border-radius: var(--kimi-radius-input); border: 1px solid var(--kimi-color-border); background: #fff; font-size: 14px; color: var(--kimi-color-text-primary); max-width: 100%; }\n.kimi-status { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: var(--kimi-radius-full); font-size: 12px; }\n.kimi-status--danger { background: color-mix(in srgb, var(--kimi-color-danger) 12%, transparent); color: var(--kimi-color-danger); }\n.kimi-status--warning { background: color-mix(in srgb, var(--kimi-color-warning) 12%, transparent); color: var(--kimi-color-warning); }\n.kimi-status--positive { background: color-mix(in srgb, var(--kimi-color-positive) 12%, transparent); color: var(--kimi-color-positive); }";
+(function () {
+  var HEAD = '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">' +
+    '<style>' + SHARED_CSS + '</style></head><body>';
+  var TAIL = '</body></html>';
+
+  function buildSrcdoc(tplId, extraHead) {
+    var frag = document.getElementById(tplId).innerHTML;
+    return HEAD + (extraHead || '') + frag + TAIL;
+  }
+
+  var seedEl = document.getElementById('fin-seed');
+  var seedJs = '<script>window.__FIN_SEED__=' + seedEl.textContent + ';<' + '/script>';
+
+  document.getElementById('if-fin').srcdoc = buildSrcdoc('tpl-fin', seedJs);
+  document.getElementById('if-sch').srcdoc = buildSrcdoc('tpl-sch');
+  document.getElementById('if-chk').srcdoc = buildSrcdoc('tpl-chk');
+
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.tabbar button'));
+  var KEY = 'cup-webapp-tab';
+  function activate(name) {
+    tabs.forEach(function (b) { b.classList.toggle('on', b.dataset.tab === name); });
+    ['fin', 'sch', 'chk'].forEach(function (k) {
+      document.getElementById('if-' + k).classList.toggle('on', k === name);
+    });
+    try { localStorage.setItem(KEY, name); } catch (e) {}
+  }
+  tabs.forEach(function (b) { b.addEventListener('click', function () { activate(b.dataset.tab); }); });
+  var last = null;
+  try { last = localStorage.getItem(KEY); } catch (e) {}
+  activate(['fin', 'sch', 'chk'].indexOf(last) >= 0 ? last : 'fin');
+})();
+</script>
+</body>
+</html>
